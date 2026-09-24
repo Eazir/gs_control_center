@@ -1,0 +1,24 @@
+{
+  "name": "gs_control_center",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GrowthShell Centro de Mando — Monolito modular con Next.js, NestJS y Turborepo",
+  "packageManager": "pnpm@12.4.2",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
+    "crypto": "node scripts/crypto-tool.mjs",
+    "db:users": "pnpm --filter api users:list",
+    "db:invite": "pnpm --filter api users:invite"
+  },
+  "devDependencies": {
+    "prettier": "^3.5.3",
+    "turbo": "^2.4.4",
+    "typescript": "^5.8.2"
+  }
+}

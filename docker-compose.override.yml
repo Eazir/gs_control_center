@@ -1,0 +1,52 @@
+# Se aplica solo en desarrollo (docker compose lo carga automáticamente).
+# Expone puertos a localhost y activa hot reload.
+services:
+  postgres:
+    ports: ["5433:5432"]
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - max_connections=50
+      - -c
+      - log_statement=all
+
+  redis:
+    ports: ["6379:6379"]
+
+  api:
+    build: { target: dev }
+    command: ["pnpm", "--filter", "api", "dev"]
+    ports: ["3001:3001", "9229:9229"]
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./packages:/app/packages
+      - /app/node_modules
+
+  ingest:
+    build: { target: dev }
+    command: ["pnpm", "--filter", "api", "dev:ingest"]
+    ports: ["3002:3002"]
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./packages:/app/packages
+      - /app/node_modules
+
+  worker:
+    build: { target: dev }
+    command: ["pnpm", "--filter", "api", "dev:worker"]
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./packages:/app/packages
+      - /app/node_modules
+
+  web:
+    build: { target: dev }
+    command: ["pnpm", "--filter", "web", "dev"]
+    ports: ["3000:3000"]
+    volumes:
+      - ./apps/web:/app/apps/web
+      - ./packages:/app/packages
+      - /app/node_modules
+      - /app/apps/web/.next

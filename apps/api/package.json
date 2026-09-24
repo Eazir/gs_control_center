@@ -1,0 +1,51 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend modular de gs_control_center (NestJS multi-rol: api, ingest, worker)",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts --role=api",
+    "dev:ingest": "tsx watch src/main.ts --role=ingest",
+    "dev:worker": "tsx watch src/main.ts --role=worker",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "prisma": "prisma",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "test:auth": "tsx test/verify-auth.ts",
+    "test:casl": "tsx test/verify-casl-rls.ts",
+    "users:list": "tsx scripts/manage-users.ts list",
+    "users:invite": "tsx scripts/manage-users.ts invite"
+  },
+  "dependencies": {
+    "@casl/ability": "^7.0.1",
+    "@gs/contracts": "workspace:*",
+    "@nestjs/common": "^11.0.11",
+    "@nestjs/core": "^11.0.11",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.11",
+    "@prisma/client": "^6.4.1",
+    "argon2": "^0.41.1",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.4.2",
+    "ioredis": "^5.6.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@gs/config": "workspace:*",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.13.9",
+    "@typescript-eslint/eslint-plugin": "^8.26.0",
+    "@typescript-eslint/parser": "^8.26.0",
+    "eslint": "^9.21.0",
+    "eslint-plugin-boundaries": "^5.0.1",
+    "prisma": "^6.4.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

@@ -1,0 +1,172 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["auth", "projects"]
+}
+
+// ============================================================================
+// SCHEMA: auth
+// ============================================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  DIRECTOR
+  CLOSER
+  CLIENTE
+
+  @@schema("auth")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  INVITED
+  DELETED
+
+  @@schema("auth")
+}
+
+model User {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String      @unique
+  passwordHash    String      @map("password_hash")
+  fullName        String      @map("full_name")
+  phone           String?
+  role            UserRole
+  status          UserStatus  @default(INVITED)
+  mfaSecretEnc    String?     @map("mfa_secret_enc")
+  mfaEnabled      Boolean     @default(false) @map("mfa_enabled")
+  lastLoginAt     DateTime?   @map("last_login_at") @db.Timestamptz
+  failedAttempts  Int         @default(0) @map("failed_attempts") @db.SmallInt
+  lockedUntil     DateTime?   @map("locked_until") @db.Timestamptz
+  preferences     Json        @default("{}") @db.JsonB
+  metadata        Json        @default("{}") @db.JsonB
+  createdBy       String?     @map("created_by") @db.Uuid
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime?   @map("deleted_at") @db.Timestamptz
+
+  sessions        Session[]
+  invitationsSent Invitation[] @relation("InvitedBy")
+
+  @@index([role], map: "users_idx_users_role")
+  @@map("users")
+  @@schema("auth")
+}
+
+model Session {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshHash  String    @map("refresh_hash")
+  ip           String?
+  userAgent    String?   @map("user_agent")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId], map: "sessions_idx_sessions_user")
+  @@index([expiresAt], map: "sessions_idx_sessions_expires")
+  @@map("sessions")
+  @@schema("auth")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  targetId   String?  @map("target_id") @db.Uuid
+  targetType String?  @map("target_type")
+  ip         String?
+  details    Json     @default("{}") @db.JsonB
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId, createdAt(sort: Desc)], map: "audit_log_idx_audit_user")
+  @@index([action, createdAt(sort: Desc)], map: "audit_log_idx_audit_action")
+  @@map("audit_log")
+  @@schema("auth")
+}
+
+model Invitation {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String
+  role        UserRole
+  tokenHash   String    @map("token_hash")
+  invitedById String    @map("invited_by_id") @db.Uuid
+  invitedBy   User      @relation("InvitedBy", fields: [invitedById], references: [id])
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  acceptedAt  DateTime? @map("accepted_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("invitations")
+  @@schema("auth")
+}
+
+// ============================================================================
+// SCHEMA: projects
+// ============================================================================
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+
+  @@schema("projects")
+}
+
+enum ProjectRole {
+  DIRECTOR
+  CLOSER
+  CLIENTE
+
+  @@schema("projects")
+}
+
+model Project {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String
+  slug              String        @unique
+  description       String?
+  status            ProjectStatus @default(DRAFT)
+  directorId        String?       @map("director_id") @db.Uuid
+  products          Json          @default("[]") @db.JsonB
+  goalsConfig       Json          @default("{}") @map("goals_config") @db.JsonB
+  commissionConfig  Json          @default("{}") @map("commission_config") @db.JsonB
+  automationConfig  Json?         @default("{}") @map("automation_config") @db.JsonB
+  settings          Json?         @default("{}") @db.JsonB
+  startDate         DateTime?     @map("start_date") @db.Date
+  endDate           DateTime?     @map("end_date") @db.Date
+  createdBy         String?       @map("created_by") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz
+
+  members           ProjectUser[]
+
+  @@index([status], map: "projects_idx_projects_status")
+  @@index([directorId], map: "projects_idx_projects_director")
+  @@map("projects")
+  @@schema("projects")
+}
+
+model ProjectUser {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId     String      @map("project_id") @db.Uuid
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId        String      @map("user_id") @db.Uuid
+  roleInProject ProjectRole @map("role_in_project")
+  permissions   Json?       @default("{}") @db.JsonB
+  assignedBy    String?     @map("assigned_by") @db.Uuid
+  assignedAt    DateTime    @default(now()) @map("assigned_at") @db.Timestamptz
+
+  @@unique([projectId, userId])
+  @@index([userId], map: "project_users_idx_project_users_user")
+  @@map("project_users")
+  @@schema("projects")
+}
