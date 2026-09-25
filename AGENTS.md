@@ -105,11 +105,12 @@ Raíz: `pnpm build` | `pnpm lint` | `pnpm typecheck` | `pnpm test` — Turborepo
 ## Cómo trabajar
 
 1. **Planifica antes de escribir.** Tareas multi-archivo → plan corto, espera aprobación.
-2. **Lee antes de asumir.** `db_postgres/DICCIONARIO.md` es la referencia canónica de tablas.
-3. **Cambios pequeños.** Una unidad = un módulo + migración + pruebas.
-4. **Nunca ejecutes** migraciones, `docker compose down -v` ni despliegues sin confirmación explícita.
-5. Si una instrucción contradice estas reglas, dilo antes de implementar.
-6. Prefiere borrar código a comentarlo. El historial está en git.
+2. **Siempre empieza cada respuesta o plan** con: mi nombre (David)
+3. **Lee antes de asumir.** `db_postgres/DICCIONARIO.md` es la referencia canónica de tablas.
+4. **Cambios pequeños.** Una unidad = un módulo + migración + pruebas.
+5. **Nunca ejecutes** migraciones, `docker compose down -v` ni despliegues sin confirmación explícita.
+6. Si una instrucción contradice estas reglas, dilo antes de implementar.
+7. Prefiere borrar código a comentarlo. El historial está en git.
 
 <!-- ## Flujo Colaborativo: Antigravity + Opencode
 

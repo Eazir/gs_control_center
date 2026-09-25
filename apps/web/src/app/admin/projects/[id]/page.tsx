@@ -208,6 +208,10 @@ export default function ProjectDetailsPage() {
   // Estado para Integraciones / Webhook
   const [copiedWebhookUrl, setCopiedWebhookUrl] = useState(false);
   const [copiedWebhookSecret, setCopiedWebhookSecret] = useState(false);
+  const [isHotmartModalOpen, setIsHotmartModalOpen] = useState(false);
+  const [hotmartSecret, setHotmartSecret] = useState('');
+  const [hotmartDateFilter, setHotmartDateFilter] = useState('');
+  const [hotmartIgnoreSubsequent, setHotmartIgnoreSubsequent] = useState(true);
 
   // Feedback de guardado
   const [isSaving, setIsSaving] = useState(false);
@@ -2144,9 +2148,17 @@ export default function ProjectDetailsPage() {
                 <div className="p-4 rounded-xl border border-border bg-[#0E1118] space-y-2">
                   <span className="text-xs font-bold text-foreground">Plataformas con Conector Nativo Activo</span>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                    <div className="p-2.5 rounded-lg border border-border/60 bg-card/30 flex items-center justify-between">
-                      <span className="text-xs font-semibold">Hotmart Webhook</span>
-                      <Badge variant="success" className="text-[10px]">Activo</Badge>
+                    <div className="p-3 rounded-lg border border-border/60 bg-card/30 flex flex-col justify-between gap-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold flex items-center gap-2">
+                          Hotmart Webhook
+                        </span>
+                        <Badge variant="success" className="text-[10px]">Activo</Badge>
+                      </div>
+                      <Button variant="outline" size="sm" className="h-7 text-[10px] w-full" onClick={() => setIsHotmartModalOpen(true)}>
+                        <Settings size={12} className="mr-1" />
+                        Configurar
+                      </Button>
                     </div>
                     <div className="p-2.5 rounded-lg border border-border/60 bg-card/30 flex items-center justify-between">
                       <span className="text-xs font-semibold">Centralize CRM</span>
@@ -3078,6 +3090,66 @@ export default function ProjectDetailsPage() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal de Configuración Hotmart */}
+        <Dialog open={isHotmartModalOpen} onOpenChange={setIsHotmartModalOpen}>
+          <DialogContent className="max-w-md bg-[#0B0D13] border-border text-foreground">
+            <DialogHeader>
+              <DialogTitle className="text-lg flex items-center gap-2">
+                Configuración de Hotmart
+                <Badge variant="success" className="text-[10px] uppercase">Webhook</Badge>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Ajusta los parámetros para recibir transacciones de Hotmart en este proyecto.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">URL del Webhook (Pega esto en Hotmart)</Label>
+                <div className="flex gap-2">
+                  <Input readOnly value={`https://api.growthshell.com/webhooks/hotmart/${projectId}`} className="h-9 text-xs font-mono bg-black/40" />
+                  <Button variant="outline" size="sm" className="h-9 px-3">
+                    <Copy size={14} />
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Hottok (Webhook Secret)</Label>
+                <Input
+                  type="password"
+                  value={hotmartSecret}
+                  onChange={(e) => setHotmartSecret(e.target.value)}
+                  placeholder="Ej: d8a9s8d9a8s9d8a9s8d9..."
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Ignorar transacciones anteriores a (Opcional)</Label>
+                <Input
+                  type="date"
+                  value={hotmartDateFilter}
+                  onChange={(e) => setHotmartDateFilter(e.target.value)}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <Checkbox
+                  id="ignore-subs"
+                  checked={hotmartIgnoreSubsequent}
+                  onCheckedChange={(c) => setHotmartIgnoreSubsequent(!!c)}
+                />
+                <div className="space-y-1 leading-none">
+                  <Label htmlFor="ignore-subs" className="text-xs font-medium cursor-pointer">Ignorar cuotas subsecuentes</Label>
+                  <p className="text-[10px] text-muted-foreground">Solo creará la venta de la cuota inicial (recurrencia).</p>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={() => setIsHotmartModalOpen(false)}>Cancelar</Button>
+              <Button variant="gold" size="sm" onClick={() => setIsHotmartModalOpen(false)}>Guardar Cambios</Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

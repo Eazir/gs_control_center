@@ -1,55 +1,64 @@
-# Plan de Implementación: Correcciones de Metas, Productos y Comisiones (Fase 3.2)
+# Plan de Integración: Hotmart, Ventas y Base de Leads
 
-Se reestructurará la interfaz de acuerdo a las últimas indicaciones, eliminando las configuraciones globales que entran en conflicto con la arquitectura de Grupos de Comisiones y refinando la gestión del catálogo de productos y usuarios.
+De acuerdo a las reglas de la plataforma (`AGENTS.md` y `integration-adapter`), el sistema no debe acoplar el webhook directamente a la lógica de negocio síncrona. Se utilizará un modelo Ingestor -> Worker para asegurar que no se pierdan datos y se filtren correctamente.
 
-## Tareas a realizar por Antigravity (Orquestador)
+## Fase 1: Configuración de la Integración (Módulo `integrations` & UI)
+**Objetivo:** Permitir conectar Hotmart y recibir eventos de forma segura y ultrarrápida.
 
-### 1. Eliminación de Configuraciones Globales
-- **`apps/web/src/app/admin/projects/[id]/page.tsx`**:
-  - Eliminar por completo la sección "Meta de Facturación Mensual Principal".
-  - Eliminar por completo la sección "Reparto Base de Comisiones por Venta".
-  - Eliminar por completo la sección global "Escalones de Comisión por Cumplimiento de Meta" (ya que ahora se manejan exclusivamente por Grupo de Comisión).
-- **`apps/web/src/app/admin/projects/page.tsx` (Tarjetas de Proyecto)**:
-  - Eliminar la barra de progreso de la "Meta Mensual" en las tarjetas del listado de proyectos.
-  - Reemplazar esa barra por un indicador de "Facturación Bruta" del proyecto.
+*   **Frontend (`apps/web`):**
+    *   Crear interfaz en la pestaña **Panel de Control > Integraciones** (vista de settings del proyecto).
+    *   Diseñar la tarjeta "Hotmart" y su Modal de Configuración.
+    *   El modal incluirá:
+        *   Input para **Webhook Secret / Hottok** (Token de seguridad).
+        *   Filtro por **Fecha**: "Solo procesar transacciones desde [Fecha]".
+        *   Filtro de **Cuotas / Recurrencia**: Reglas para ignorar cobros de 2da/3ra cuota como nuevas ventas, ligándolas a la venta original.
+        *   Lista informativa de **Productos Activos** en el proyecto (y sus códigos de oferta). Solo los eventos que coincidan con estos productos ingresarán.
+*   **Backend (`apps/api`):**
+    *   Esquema Prisma: Tablas para guardar credenciales de integración (cifradas en base de datos con AES-256-GCM) y reglas de filtrado del proyecto.
+    *   Endpoint **Ingest Port** (`POST /integrations/hotmart/webhook/:projectId`):
+        *   Verifica la firma (Hottok). Si falla → `401 Unauthorized`.
+        *   Inserta el JSON crudo en `integrations.events` con estado `RECEIVED`.
+        *   Encola el ID del evento en BullMQ.
+        *   Retorna `200 OK` (todo esto en < 100ms).
 
-### 2. Refactorización del Catálogo de Productos
-- **`apps/web/src/app/admin/projects/page.tsx` y `apps/web/src/app/admin/projects/[id]/page.tsx`**:
-  - Convertir el formulario de creación de productos (que actualmente se encuentra debajo de la tabla) en un **Modal flotante (Dialog)** que se abre mediante un botón "Agregar Nuevo Producto".
-  - Uniformizar este modal para que se use tanto desde el Panel Principal (`[id]/page.tsx`) como desde las tarjetas de proyectos (`projects/page.tsx`).
-  - Actualizar las columnas de la tabla del catálogo para que muestren: Nombre, Código de Oferta, Precio, Cuotas, Closer Asignado / Label Externo, Estado (Activo/Inactivo) y la Acción de Eliminar.
-  - Implementar lógica en el frontend para validar que no se pueda agregar un producto con un `código de oferta` si ya existe otro activo con el mismo código, mostrando una notificación al usuario ("Debe desactivar el producto existente antes de crear uno nuevo").
-  - (Opcional visual) Bloquear el botón de eliminar si el producto ya tiene ventas asociadas (se simulará o dependerá de una propiedad `hasSales` del backend).
+## Fase 2: Procesamiento de Eventos (Worker y Módulo `sales`)
+**Objetivo:** Consumir los webhooks, filtrarlos según la configuración y normalizarlos a Ventas.
+
+*   **Backend (BullMQ Worker en `apps/api`):**
+    *   Toma el evento `RECEIVED`.
+    *   Evalúa reglas de filtrado:
+        *   ¿Fecha de compra es anterior a la fecha de corte configurada? → Se marca `SKIPPED_BY_DATE`.
+        *   ¿El código de oferta no está registrado en el proyecto? → Se marca `SKIPPED_UNKNOWN_PRODUCT`.
+    *   **Manejo de Cuotas:**
+        *   Al detectar que la transacción tiene un número de cuota mayor a 1 (o es una recurrencia subsecuente).
+        *   Busca la venta padre (`external_order_id` o `subscription_id` previo).
+        *   La registra como "pago de cuota" de esa suscripción, sin duplicar al cliente en la base de leads ni crear un lead nuevo.
+    *   **Idempotencia:** Inserta en la tabla `sales` respetando la restricción única `UNIQUE (source, external_order_id, external_txn_id)`. Si ya existe, se marca como `DUPLICATE`.
+    *   Emite un evento interno de dominio `SaleRegisteredEvent`.
+
+## Fase 3: Base de Leads y Pipeline (Módulo `pipeline` / `projects`)
+**Objetivo:** Alimentar a los leads con los datos de las ventas automáticas, manuales o importadas.
+
+*   **Backend:**
+    *   Listener del evento `SaleRegisteredEvent`:
+        *   Verifica si el comprador (email) ya es un Lead del proyecto. Si no lo es, lo crea.
+        *   Actualiza el estado del Lead en el Pipeline (Ej: Lo mueve a "Cierre Ganado" si se aprueba la venta, o lo envía a recuperación si Hotmart reporta tarjeta rechazada).
+    *   Endpoints CRUD en Módulo `pipeline`:
+        *   Endpoint para **Importación CSV** de Leads.
+        *   Endpoint para **Creación/Edición Manual** de Leads.
+        *   Endpoint para registrar **Ventas Manuales** (alimentando el módulo `sales`).
+*   **Frontend:**
+    *   Vistas completas de la tabla **Base de Leads**.
+    *   Componentes de "Crear Lead Manual" e "Importar CSV" (validando esquema con Zod).
+    *   Vista "Registrar Venta Manual" para el Closer.
 
 ---
 
-## Tareas a realizar por Opencode (Ejecutor)
+### ¿Qué necesito para poder empezar (Fase 1)?
 
-### 3. Filtros en Menús Desplegables de Usuarios (User Selects)
-Opencode se encargará de actualizar todos los selectores de usuarios en la interfaz para que discriminen correctamente los listados.
+Para comenzar a codificar la integración, por favor confírmame o provee lo siguiente:
 
-- **`apps/web/src/app/admin/projects/page.tsx`**:
-  - En la creación de proyectos (asignar Director): Filtrar la lista de usuarios para mostrar **solo cuentas activas** (ej. `isActive === true`) y que tengan rol de `DIRECTOR` o `ADMIN` (excluyendo a todos los demás roles y cuentas suspendidas).
-  - En la pestaña de Equipo del Proyecto (Asignar miembro): Al desplegar la lista de usuarios para asignar como `CLOSER` o `DIRECTOR`, asegurarse de que solo aparezcan usuarios con la cuenta activa y que el rol corresponda a la selección (o que la lista se limpie de cuentas no válidas).
-
-- **`apps/web/src/app/admin/projects/[id]/page.tsx`**:
-  - En el catálogo de productos (al asignar Closer propietario): Garantizar que el dropdown liste exclusivamente usuarios activos con el rol `CLOSER`.
-
-> [!NOTE]
-> Opencode, al ejecutar tu parte, asegúrate de revisar la estructura actual del objeto `AppUser` retornado por `/auth/users` y filtrar de forma estricta por `isActive` (o la bandera que aplique en tu backend actual) y `role`.
-
----
-
-## Preguntas Abiertas (Open Questions)
-
-> [!WARNING]
-> 1. **Facturación Bruta en la Tarjeta del Proyecto:** Actualmente en el frontend de `projects/page.tsx` (Summary del proyecto), ¿tenemos ya un campo en `ProjectSummary` que contenga la facturación bruta, o debemos poner un valor mockeado temporal (`$0.00`) hasta que se actualice la ruta del backend?
-> 2. **Eliminación de Productos:** Si un producto tiene ventas, no se puede eliminar. ¿El backend ya devuelve una propiedad tipo `canDelete` o `salesCount` en el `ProductItem`, o deberíamos depender del mensaje de error del backend (Catch del Delete) para notificar al usuario que no se puede eliminar?
-
-## Plan de Verificación
-
-### Manual Verification
-- Ingresar a la vista principal de proyectos (`/admin/projects`). Verificar que la barra de progreso mensual ya no esté y se muestre la "Facturación Bruta".
-- Ingresar a un proyecto específico (`/admin/projects/[id]`). Verificar que solo existan los "Grupos de Comisión" sin configuraciones globales heredadas.
-- En el catálogo de productos, probar agregar un producto y validar que se abre en un modal flotante en lugar de estar incrustado. Intentar duplicar un código de oferta activo y verificar la restricción.
-- Opencode verificará los dropdowns de usuarios confirmando que las listas están restringidas por rol (ej. Solo Closers en asignación de Closer).
+1.  **Esquema Prisma (Productos):** Actualmente, ¿tienes definida la estructura de productos (y sus códigos de oferta) a nivel de Prisma en `schema.prisma`, o necesitamos crear/actualizar la tabla `Product` para enlazarla al `ProjectId`? (Actualmente vi que se manejan a nivel de UI pero quiero confirmar su estado en DB).
+2.  **Infraestructura BullMQ:** ¿Ya tienes configurado un contenedor de **Redis** en el `docker-compose` de desarrollo para orquestar la cola de los webhooks?
+3.  **Claves Criptográficas:** ¿Tienes la variable de entorno `INTEGRATION_ENCRYPTION_KEY` definida (y cifrada en age/sops si corresponde) para proteger los tokens de Hotmart?
+4.  **Estado de Eventos a Soportar:** Inicialmente, procesaremos: Compra Aprobada, Compra Reembolsada y Compra Rechazada (para carritos abandonados/recuperación). ¿Requieres algún evento adicional como "Boleto/Ticket generado"?

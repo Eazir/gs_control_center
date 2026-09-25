@@ -5,7 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["auth", "projects"]
+  schemas  = ["auth", "projects", "integrations"]
 }
 
 // ============================================================================
@@ -169,4 +169,65 @@ model ProjectUser {
   @@index([userId], map: "project_users_idx_project_users_user")
   @@map("project_users")
   @@schema("projects")
+}
+
+// ============================================================================
+// SCHEMA: integrations
+// ============================================================================
+
+enum ProviderType {
+  HOTMART
+  CENTRALIZE
+  GHL
+  CUSTOM
+
+  @@schema("integrations")
+}
+
+enum EventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  SKIPPED_BY_DATE
+  SKIPPED_UNKNOWN_PRODUCT
+  DUPLICATE
+
+  @@schema("integrations")
+}
+
+model IntegrationConfig {
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId           String       @map("project_id") @db.Uuid
+  provider            ProviderType
+  isActive            Boolean      @default(true) @map("is_active")
+  credentialsEnc      String?      @map("credentials_enc")
+  validFrom           DateTime?    @map("valid_from") @db.Timestamptz
+  ignoreSubsequent    Boolean      @default(true) @map("ignore_subsequent")
+  customSettings      Json         @default("{}") @map("custom_settings") @db.JsonB
+  createdBy           String?      @map("created_by") @db.Uuid
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([projectId, provider])
+  @@index([projectId], map: "integrations_idx_config_project")
+  @@map("integration_configs")
+  @@schema("integrations")
+}
+
+model IntegrationEvent {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String       @map("project_id") @db.Uuid
+  provider    ProviderType
+  eventType   String       @map("event_type")
+  payload     Json         @db.JsonB
+  status      EventStatus  @default(RECEIVED)
+  errorReason String?      @map("error_reason")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  processedAt DateTime?    @map("processed_at") @db.Timestamptz
+
+  @@index([projectId, status], map: "integrations_idx_events_project_status")
+  @@index([createdAt], map: "integrations_idx_events_created")
+  @@map("integration_events")
+  @@schema("integrations")
 }

@@ -1064,7 +1064,7 @@ export default function AdminProjectsPage() {
                         const effectiveRole = 
                           currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN' 
                             ? currentUser.role 
-                            : (project.currentUserRoleInProject || currentUser?.role);
+                            : ((project as any).currentUserRoleInProject || currentUser?.role);
                         return effectiveRole !== 'CLOSER';
                       })() && (
                         <Button
