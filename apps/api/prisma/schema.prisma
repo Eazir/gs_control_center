@@ -5,7 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["auth", "projects", "integrations"]
+  schemas  = ["auth", "projects", "integrations", "sales"]
 }
 
 // ============================================================================
@@ -230,4 +230,74 @@ model IntegrationEvent {
   @@index([createdAt], map: "integrations_idx_events_created")
   @@map("integration_events")
   @@schema("integrations")
+}
+
+// ============================================================================
+// SCHEMA: sales
+// ============================================================================
+
+model Lead {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String    @map("project_id") @db.Uuid
+  
+  // Datos de contacto
+  name            String?
+  email           String?
+  phone           String?
+  
+  // Pipeline
+  pipelineStage   String    @default("new") @map("pipeline_stage")
+  closerId        String?   @map("closer_id") @db.Uuid // Referencia lógica a auth.users(id)
+  
+  // Métricas rápidas cacheadas (opcional pero útil)
+  totalValue      Decimal   @default(0) @map("total_value") @db.Decimal(10, 2)
+  
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+
+  sales           Sale[]
+
+  @@unique([projectId, email]) // Un lead es único por correo electrónico en un proyecto
+  @@index([projectId, closerId])
+  @@index([projectId, pipelineStage])
+  @@map("leads")
+  @@schema("sales")
+}
+
+model Sale {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId        String    @map("project_id") @db.Uuid
+  
+  // Relación con el Lead dentro del mismo schema
+  leadId           String    @map("lead_id") @db.Uuid
+  lead             Lead      @relation(fields: [leadId], references: [id])
+  
+  // Idempotencia y Trazabilidad (Contrato innegociable de Integrations)
+  source           String    // 'HOTMART', 'MANUAL', 'CENTRALIZE', etc.
+  externalOrderId  String    @map("external_order_id") // Ej: SC12345 (Transacción de compra)
+  externalTxnId    String    @map("external_txn_id")   // Ej: HP12345 (Transacción individual: cuota, reembolso, etc)
+  
+  // Información de Negocio
+  productName      String    @map("product_name")
+  productId        String?   @map("product_id")        // ID del producto en Hotmart
+  status           String    // 'APPROVED', 'REFUNDED', 'CHARGEBACK', 'CANCELED', 'BILLET_PRINTED', etc.
+  
+  // Valor financiero
+  amount           Decimal   @db.Decimal(10, 2)
+  currency         String    @default("USD")
+  
+  // Metadatos
+  paymentMethod    String?   @map("payment_method")
+  installments     Int?      @default(1)
+  
+  // Trazabilidad
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Garantiza que JAMÁS se procese la misma transacción dos veces
+  @@unique([source, externalOrderId, externalTxnId])
+  @@index([projectId, status])
+  @@map("sales")
+  @@schema("sales")
 }

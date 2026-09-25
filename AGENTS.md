@@ -111,6 +111,7 @@ Raíz: `pnpm build` | `pnpm lint` | `pnpm typecheck` | `pnpm test` — Turborepo
 5. **Nunca ejecutes** migraciones, `docker compose down -v` ni despliegues sin confirmación explícita.
 6. Si una instrucción contradice estas reglas, dilo antes de implementar.
 7. Prefiere borrar código a comentarlo. El historial está en git.
+8. al terminar audita todo el codigo que acabas de generar respecto a funcionalidad tecnica y a cumplimiento de objetivo del plan
 
 <!-- ## Flujo Colaborativo: Antigravity + Opencode
 

@@ -40,6 +40,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { AdminShell } from '@/components/layout/admin-shell';
+import { SalesView } from '@/components/admin/projects/SalesView';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -142,10 +143,10 @@ export default function ProjectDetailsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 4 VISTAS PRINCIPALES CANÓNICAS
+  // 4 VISTAS PRINCIPALES CANÓNICAS -> 5 VISTAS
   const searchParams = useSearchParams();
-  const initialView = (searchParams?.get('view') as 'pipeline' | 'leads' | 'metrics' | 'settings') || 'pipeline';
-  const [mainView, setMainView] = useState<'pipeline' | 'leads' | 'metrics' | 'settings'>(initialView);
+  const initialView = (searchParams?.get('view') as 'pipeline' | 'leads' | 'metrics' | 'settings' | 'sales') || 'pipeline';
+  const [mainView, setMainView] = useState<'pipeline' | 'leads' | 'metrics' | 'settings' | 'sales'>(initialView);
 
   // SUB-PESTAÑAS DEL PANEL DE CONTROL (5 CONFIGURACIONES)
   const [settingsTab, setSettingsTab] = useState<'team' | 'pipeline_settings' | 'integrations' | 'general' | 'goals'>('team');
@@ -161,7 +162,7 @@ export default function ProjectDetailsPage() {
   const [newProdOfferCode, setNewProdOfferCode] = useState('');
   const [newProdOwnerCloserId, setNewProdOwnerCloserId] = useState('');
   const [newProdExternalLabel, setNewProdExternalLabel] = useState('');
-  const [newProdPrice, setNewProdPrice] = useState(997);
+  const [newProdPrice, setNewProdPrice] = useState(0);
   const [newProdInstallments, setNewProdInstallments] = useState(1);
   const [newProdCurrency, setNewProdCurrency] = useState('USD');
   const [isAddingProd, setIsAddingProd] = useState(false);
@@ -322,72 +323,23 @@ export default function ProjectDetailsPage() {
         setPipelineStages(projectSettings.pipelineStages);
       }
 
-      // Generar o cargar leads de ejemplo interactivos para este proyecto
+      // Cargar prospectos guardados para este proyecto
       const savedLeadsKey = `gs_leads_${projectId}`;
       const savedLeads = localStorage.getItem(savedLeadsKey);
       if (savedLeads) {
         try {
-          setLeads(JSON.parse(savedLeads));
+          const parsed = JSON.parse(savedLeads);
+          // Filtrar cualquier lead de prueba previo ('lead-1', 'lead-2', 'lead-3', 'lead-4')
+          const realLeads = Array.isArray(parsed)
+            ? parsed.filter((l: ProjectLead) => !['lead-1', 'lead-2', 'lead-3', 'lead-4'].includes(l.id))
+            : [];
+          setLeads(realLeads);
+          localStorage.setItem(savedLeadsKey, JSON.stringify(realLeads));
         } catch {
-          // Ignorar
+          setLeads([]);
         }
       } else {
-        const demoLeads: ProjectLead[] = [
-          {
-            id: 'lead-1',
-            fullName: 'Alejandro Morales',
-            email: 'alejandro.m@gmail.com',
-            phone: '+57 310 445 8892',
-            stageId: 'won',
-            closerName: 'Carlos Méndez',
-            productName: data.products?.[0]?.name || 'Programa Elite High-Ticket',
-            estimatedValue: 997,
-            source: 'Hotmart Checkout Abandonado',
-            createdAt: '2026-09-17T14:30:00Z',
-          },
-          {
-            id: 'lead-2',
-            fullName: 'Camila Restrepo',
-            email: 'camila.restrepo@hotmail.com',
-            phone: '+57 320 671 2341',
-            stageId: 'sched',
-            closerName: 'Ana Lucía Gómez',
-            productName: data.products?.[0]?.name || 'Mastery Mentorship VIP',
-            estimatedValue: 1497,
-            source: 'Centralize CRM - Formulario Web',
-            createdAt: '2026-09-18T10:15:00Z',
-          },
-          {
-            id: 'lead-3',
-            fullName: 'Daniel Sandoval',
-            email: 'daniel.san@empresa.co',
-            phone: '+52 55 4912 3091',
-            stageId: 'offer',
-            closerName: 'Carlos Méndez',
-            productName: data.products?.[0]?.name || 'Programa Elite High-Ticket',
-            estimatedValue: 997,
-            source: 'GoHighLevel - Lead Magnet',
-            createdAt: '2026-09-18T16:45:00Z',
-          },
-          {
-            id: 'lead-4',
-            fullName: 'Valentina Pineda',
-            email: 'valen.pineda@yahoo.com',
-            phone: '+57 301 889 1104',
-            stageId: 'qual',
-            closerName: 'Por Asignar',
-            productName: data.products?.[0]?.name || 'Ticket General $497',
-            estimatedValue: 497,
-            source: 'Hotmart Webhook',
-            createdAt: '2026-09-18T20:00:00Z',
-          },
-        ];
-        setLeads(demoLeads);
-        try {
-          localStorage.setItem(savedLeadsKey, JSON.stringify(demoLeads));
-        } catch {
-          // Ignorar
-        }
+        setLeads([]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar el proyecto');
@@ -653,11 +605,11 @@ export default function ProjectDetailsPage() {
       name: 'Nuevo Grupo de Comisión',
       productIds: [],
       basePercentages: {
-        teamTotal: 90,
-        company: 70,
-        director: 5,
-        closer: 15,
-        external: 5,
+        teamTotal: 25,
+        company: 12,
+        director: 3,
+        closer: 10,
+        external: 2,
       },
       goals: [],
       active: true,
@@ -1318,6 +1270,19 @@ export default function ProjectDetailsPage() {
             <span>Métricas</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() => setMainView('sales')}
+            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
+              mainView === 'sales'
+                ? 'border-primary text-primary shadow-[0_4px_12px_rgba(245,158,11,0.15)]'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <DollarSign size={15} />
+            <span>Ventas</span>
+          </button>
+
           {effectiveRole !== 'CLOSER' && (
             <button
               type="button"
@@ -1717,6 +1682,22 @@ export default function ProjectDetailsPage() {
         )}
 
         {/* ============================================================= */}
+        {/* VISTA 5: VENTAS (IMPORTACIÓN Y REGISTRO)                      */}
+        {/* ============================================================= */}
+        {mainView === 'sales' && project && (
+          <div className="animate-in fade-in-50">
+            <SalesView
+              projectId={project.id}
+              products={products}
+              members={members}
+              leads={leads}
+              allUsers={allUsers}
+              projectCurrency={project.goalsConfig?.currency || goalsConfigState.currency || 'USD'}
+            />
+          </div>
+        )}
+
+        {/* ============================================================= */}
         {/* VISTA 4: PANEL DE CONTROL (5 CONFIGURACIONES DEL PROYECTO)    */}
         {/* ============================================================= */}
         {mainView === 'settings' && effectiveRole !== 'CLOSER' && (
@@ -1787,7 +1768,7 @@ export default function ProjectDetailsPage() {
                     }`}
                   >
                     <Target size={14} />
-                    <span>5. Metas & Comisiones</span>
+                    <span>5. Productos, Metas & Comisiones</span>
                   </button>
                 </>
               )}
@@ -2383,9 +2364,9 @@ export default function ProjectDetailsPage() {
                         <form onSubmit={handleAddProduct} className="space-y-4 pt-2">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">Nuevo Ticket / Producto <span className="text-primary">*</span></Label>
+                              <Label className="text-[11px] text-muted-foreground">Nuevo Producto <span className="text-primary">*</span></Label>
                               <Input
-                                placeholder="Ej. Programa Master VIP $997"
+                                placeholder="Ej: Mentoria Master VIP $900"
                                 value={newProdName}
                                 onChange={(e) => setNewProdName(e.target.value)}
                                 className="bg-[#0B0D13] text-xs h-9"
@@ -2395,19 +2376,19 @@ export default function ProjectDetailsPage() {
                             <div className="space-y-1">
                               <Label className="text-[11px] text-muted-foreground">Código de Oferta</Label>
                               <Input
-                                placeholder="Ej. OFF-123"
+                                placeholder="Ej: gsi35uek"
                                 value={newProdOfferCode}
                                 onChange={(e) => setNewProdOfferCode(e.target.value)}
                                 className="bg-[#0B0D13] text-xs h-9 font-mono"
                               />
                             </div>
                           </div>
-                          
+
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">SKU / Código</Label>
+                              <Label className="text-[11px] text-muted-foreground">Identificador / SCK</Label>
                               <Input
-                                placeholder="Ej. MVP-997"
+                                placeholder="Ej: closer-diego"
                                 value={newProdSku}
                                 onChange={(e) => setNewProdSku(e.target.value)}
                                 className="bg-[#0B0D13] text-xs h-9 font-mono"
@@ -2418,8 +2399,10 @@ export default function ProjectDetailsPage() {
                               <Input
                                 type="number"
                                 min="0"
+                                step="1"
                                 value={newProdPrice}
                                 onChange={(e) => setNewProdPrice(Number(e.target.value))}
+                                onFocus={(e) => e.target.select()}
                                 className="bg-[#0B0D13] text-xs h-9 font-mono"
                                 required
                               />
@@ -2429,10 +2412,11 @@ export default function ProjectDetailsPage() {
                               <Input
                                 type="number"
                                 min="1"
-                                max="360"
+                                max="12"
                                 step="1"
                                 value={newProdInstallments}
                                 onChange={(e) => setNewProdInstallments(Math.max(1, Number(e.target.value)))}
+                                onFocus={(e) => e.target.select()}
                                 className="bg-[#0B0D13] text-xs h-9 font-mono"
                                 required
                               />
@@ -2552,6 +2536,7 @@ export default function ProjectDetailsPage() {
                                 <Input
                                   value={group.name}
                                   onChange={(e) => handleUpdateCommissionGroup(group.id, 'name', e.target.value)}
+                                  onFocus={(e) => e.target.select()}
                                   disabled={isDirector || isSaving}
                                   className="bg-[#0B0D13] text-xs h-8 font-semibold"
                                 />
@@ -2643,6 +2628,7 @@ export default function ProjectDetailsPage() {
                                     onChange={(e) =>
                                       handleUpdateGroupPercentages(group.id, 'teamTotal', Number(e.target.value))
                                     }
+                                    onFocus={(e) => e.target.select()}
                                     disabled={isDirector || isSaving}
                                     className={`h-7 text-xs font-mono bg-[#0B0D13] ${
                                       splitError ? 'border-red-500/50 text-red-400' : 'text-primary'
@@ -2660,6 +2646,7 @@ export default function ProjectDetailsPage() {
                                     onChange={(e) =>
                                       handleUpdateGroupPercentages(group.id, 'company', Number(e.target.value))
                                     }
+                                    onFocus={(e) => e.target.select()}
                                     disabled={isDirector || isSaving}
                                     className="h-7 text-xs font-mono text-emerald-400 bg-[#0B0D13]"
                                   />
@@ -2676,6 +2663,7 @@ export default function ProjectDetailsPage() {
                                       handleUpdateGroupPercentages(group.id, 'director', Number(e.target.value))
                                     }
                                     disabled={isDirector || isSaving}
+                                    onFocus={(e) => e.target.select()}
                                     className="h-7 text-xs font-mono text-blue-400 bg-[#0B0D13]"
                                   />
                                 </div>
@@ -2690,6 +2678,7 @@ export default function ProjectDetailsPage() {
                                     onChange={(e) =>
                                       handleUpdateGroupPercentages(group.id, 'closer', Number(e.target.value))
                                     }
+                                    onFocus={(e) => e.target.select()}
                                     disabled={isDirector || isSaving}
                                     className="h-7 text-xs font-mono text-violet-400 bg-[#0B0D13]"
                                   />
@@ -2705,6 +2694,7 @@ export default function ProjectDetailsPage() {
                                     onChange={(e) =>
                                       handleUpdateGroupPercentages(group.id, 'external', Number(e.target.value))
                                     }
+                                    onFocus={(e) => e.target.select()}
                                     disabled={isDirector || isSaving}
                                     className="h-7 text-xs font-mono text-purple-400 bg-[#0B0D13]"
                                   />
@@ -2755,6 +2745,7 @@ export default function ProjectDetailsPage() {
                                                 onChange={(e) =>
                                                   handleUpdateGroupGoal(group.id, goal.id, 'name', e.target.value)
                                                 }
+                                                onFocus={(e) => e.target.select()}
                                                 disabled={isDirector || isSaving}
                                                 className="bg-[#0B0D13] text-xs h-7"
                                               />

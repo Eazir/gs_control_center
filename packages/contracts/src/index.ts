@@ -16,3 +16,5 @@ export * from './auth/profile';
 // Projects
 export * from './projects/projects';
 
+// Sales
+export * from './sales/sales';
