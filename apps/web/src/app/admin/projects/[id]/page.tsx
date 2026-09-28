@@ -12,6 +12,7 @@ import {
   Settings,
   Plus,
   Trash2,
+  Pencil,
   CheckCircle2,
   AlertCircle,
   RotateCw,
@@ -38,9 +39,14 @@ import {
   ChevronRight,
   UserCheck,
   Layers,
+  Activity,
+  User,
 } from 'lucide-react';
 import { AdminShell } from '@/components/layout/admin-shell';
 import { SalesView } from '@/components/admin/projects/SalesView';
+import { TransactionsView } from '@/components/admin/projects/TransactionsView';
+import { LeadDetailModal, LeadData } from '@/components/admin/projects/LeadDetailModal';
+import { TransactionDetailModal, TransactionData } from '@/components/admin/projects/TransactionDetailModal';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -75,6 +81,7 @@ import {
   CommissionGroup,
   GoalsConfig,
 } from '@gs/contracts';
+export type ProjectProduct = ProductItem;
 
 interface AppUser {
   id: string;
@@ -103,7 +110,6 @@ interface ProjectMember {
 interface PipelineStageConfig {
   id: string;
   name: string;
-  probability: number;
   color: string;
 }
 
@@ -119,15 +125,17 @@ interface ProjectLead {
   estimatedValue: number;
   source: string;
   createdAt: string;
+  installments?: number;
+  offerCode?: string;
+  latestTransaction?: TransactionData | null;
 }
 
 const DEFAULT_STAGES: PipelineStageConfig[] = [
-  { id: 'qual', name: 'Prospecto Cualificado', probability: 10, color: '#3B82F6' },
-  { id: 'sched', name: 'Llamada Agendada', probability: 35, color: '#F59E0B' },
-  { id: 'offer', name: 'Oferta Realizada', probability: 65, color: '#8B5CF6' },
-  { id: 'follow', name: 'En Seguimiento', probability: 80, color: '#06B6D4' },
-  { id: 'won', name: 'Cierre Ganado', probability: 100, color: '#10B981' },
-  { id: 'lost', name: 'No Concretado', probability: 0, color: '#EF4444' },
+  { id: 'uncontacted', name: 'Sin Contactar', color: '#6B7280' },
+  { id: 'followup', name: 'En Seguimiento', color: '#3B82F6' },
+  { id: 'recovery', name: 'Para Recuperación', color: '#F59E0B' },
+  { id: 'won', name: 'Ganado', color: '#10B981' },
+  { id: 'lost', name: 'Perdido', color: '#EF4444' },
 ];
 
 export default function ProjectDetailsPage() {
@@ -145,27 +153,68 @@ export default function ProjectDetailsPage() {
 
   // 4 VISTAS PRINCIPALES CANÓNICAS -> 5 VISTAS
   const searchParams = useSearchParams();
-  const initialView = (searchParams?.get('view') as 'pipeline' | 'leads' | 'metrics' | 'settings' | 'sales') || 'pipeline';
-  const [mainView, setMainView] = useState<'pipeline' | 'leads' | 'metrics' | 'settings' | 'sales'>(initialView);
+  const initialView = (searchParams?.get('view') as 'pipeline' | 'leads' | 'metrics' | 'settings' | 'sales' | 'transactions') || 'pipeline';
+  const [mainView, setMainView] = useState<'pipeline' | 'leads' | 'metrics' | 'settings' | 'sales' | 'transactions'>(initialView);
 
   // SUB-PESTAÑAS DEL PANEL DE CONTROL (5 CONFIGURACIONES)
   const [settingsTab, setSettingsTab] = useState<'team' | 'pipeline_settings' | 'integrations' | 'general' | 'goals'>('team');
 
-  // Usuarios del sistema para asignaciones y equipo
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
 
+  // Modal Profile
+  const [selectedLead, setSelectedLead] = useState<LeadData | null>(null);
+  const [selectedTransaction, setSelectedTransaction] = useState<TransactionData | null>(null);
+
+  // Funciones de Drag & Drop para Kanban
+  const handleDragStart = (e: React.DragEvent, leadId: string) => {
+    e.dataTransfer.setData('leadId', leadId);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault(); // Necesario para permitir onDrop
+  };
+
+  const handleDrop = (e: React.DragEvent, targetStageId: string) => {
+    e.preventDefault();
+    const leadId = e.dataTransfer.getData('leadId');
+    if (leadId) {
+      handleMoveLeadStage(leadId, targetStageId);
+    }
+  };
+
+  // Funciones de Drag & Drop para ordenar Pipeline Stages
+  const handleStageDragStart = (e: React.DragEvent, index: number) => {
+    e.dataTransfer.setData('stageIndex', index.toString());
+  };
+
+  const handleStageDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    const dragIndexStr = e.dataTransfer.getData('stageIndex');
+    if (dragIndexStr) {
+      const dragIndex = parseInt(dragIndexStr, 10);
+      if (dragIndex === dropIndex) return;
+      const newStages = [...pipelineStages];
+      const draggedItem = newStages[dragIndex];
+      if (!draggedItem) return;
+      newStages.splice(dragIndex, 1);
+      newStages.splice(dropIndex, 0, draggedItem);
+      setPipelineStages(newStages);
+    }
+  };
+
   // Estado para Catálogo de Productos
-  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [products, setProducts] = useState<ProjectProduct[]>([]);
   const [newProdName, setNewProdName] = useState('');
-  const [newProdSku, setNewProdSku] = useState('');
   const [newProdOfferCode, setNewProdOfferCode] = useState('');
+  const [newProdSck, setNewProdSck] = useState('');
   const [newProdOwnerCloserId, setNewProdOwnerCloserId] = useState('');
   const [newProdExternalLabel, setNewProdExternalLabel] = useState('');
   const [newProdPrice, setNewProdPrice] = useState(0);
   const [newProdInstallments, setNewProdInstallments] = useState(1);
   const [newProdCurrency, setNewProdCurrency] = useState('USD');
   const [isAddingProd, setIsAddingProd] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<ProjectProduct | null>(null);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [productFormError, setProductFormError] = useState<string | null>(null);
 
@@ -203,7 +252,6 @@ export default function ProjectDetailsPage() {
   // Estado para Ajustes del Pipeline (Etapas)
   const [pipelineStages, setPipelineStages] = useState<PipelineStageConfig[]>(DEFAULT_STAGES);
   const [newStageName, setNewStageName] = useState('');
-  const [newStageProb, setNewStageProb] = useState(50);
   const [newStageColor, setNewStageColor] = useState('#F59E0B');
 
   // Estado para Integraciones / Webhook
@@ -213,6 +261,10 @@ export default function ProjectDetailsPage() {
   const [hotmartSecret, setHotmartSecret] = useState('');
   const [hotmartDateFilter, setHotmartDateFilter] = useState('');
   const [hotmartIgnoreSubsequent, setHotmartIgnoreSubsequent] = useState(true);
+  const [tunnelUrl, setTunnelUrl] = useState('');
+  const [isSavingHotmart, setIsSavingHotmart] = useState(false);
+  const [hotmartSavedSuccess, setHotmartSavedSuccess] = useState(false);
+  const [copiedHotmartUrl, setCopiedHotmartUrl] = useState(false);
 
   // Feedback de guardado
   const [isSaving, setIsSaving] = useState(false);
@@ -224,6 +276,7 @@ export default function ProjectDetailsPage() {
   const [leadSearch, setLeadSearch] = useState('');
   const [closerFilter, setCloserFilter] = useState('ALL');
   const [stageFilter, setStageFilter] = useState('ALL');
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState('ALL');
 
   // Modal para crear lead rápido
   const [isNewLeadOpen, setIsNewLeadOpen] = useState(false);
@@ -233,7 +286,7 @@ export default function ProjectDetailsPage() {
   const [newLeadCloser, setNewLeadCloser] = useState('');
   const [newLeadProduct, setNewLeadProduct] = useState('');
   const [newLeadValue, setNewLeadValue] = useState(997);
-  const [newLeadStage, setNewLeadStage] = useState('qual');
+  const [newLeadStage, setNewLeadStage] = useState('uncontacted');
 
   // Roles y permisos
   const currentUserProjectMember = useMemo(() => {
@@ -286,7 +339,7 @@ export default function ProjectDetailsPage() {
       }
       const data: ProjectSummary = await projRes.json();
       setProject(data);
-      setProducts(data.products || []);
+      setProducts((data.products || []) as ProjectProduct[]);
 
       // Inicializar metas
       const existingGoals = data.goalsConfig || { monthlyTargetRevenue: 0, currency: 'USD', goals: [] };
@@ -323,24 +376,7 @@ export default function ProjectDetailsPage() {
         setPipelineStages(projectSettings.pipelineStages);
       }
 
-      // Cargar prospectos guardados para este proyecto
-      const savedLeadsKey = `gs_leads_${projectId}`;
-      const savedLeads = localStorage.getItem(savedLeadsKey);
-      if (savedLeads) {
-        try {
-          const parsed = JSON.parse(savedLeads);
-          // Filtrar cualquier lead de prueba previo ('lead-1', 'lead-2', 'lead-3', 'lead-4')
-          const realLeads = Array.isArray(parsed)
-            ? parsed.filter((l: ProjectLead) => !['lead-1', 'lead-2', 'lead-3', 'lead-4'].includes(l.id))
-            : [];
-          setLeads(realLeads);
-          localStorage.setItem(savedLeadsKey, JSON.stringify(realLeads));
-        } catch {
-          setLeads([]);
-        }
-      } else {
-        setLeads([]);
-      }
+      // Los prospectos (leads) se cargan ahora mediante la API real en `loadLeads`
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar el proyecto');
     } finally {
@@ -373,21 +409,31 @@ export default function ProjectDetailsPage() {
     }
   }, [projectId]);
 
+  const loadLeads = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const res = await fetchWithAuth(`/sales/project/${projectId}/leads`);
+      if (res.ok) {
+        const data = await res.json();
+        const rawLeads: ProjectLead[] = Array.isArray(data) ? data : [];
+        // Enriquecer con closerName usando la lista de miembros del proyecto
+        // members puede no estar aún cargado; se vuelve a enriquecer en el useMemo
+        setLeads(rawLeads);
+      }
+    } catch {
+      setLeads([]);
+    }
+  }, [projectId]);
+
   useEffect(() => {
     loadProject();
     loadMembersAndUsers();
-  }, [loadProject, loadMembersAndUsers]);
+    loadLeads();
+  }, [loadProject, loadMembersAndUsers, loadLeads]);
 
-  // Guardar leads en localStorage al modificarlos
+  // Recargar leads en lugar de guardarlos en local
   const saveLeadsState = (updatedLeads: ProjectLead[]) => {
     setLeads(updatedLeads);
-    if (projectId) {
-      try {
-        localStorage.setItem(`gs_leads_${projectId}`, JSON.stringify(updatedLeads));
-      } catch {
-        // Ignorar
-      }
-    }
   };
 
   // Usuarios disponibles para vincular al equipo (activos, sin SUPER_ADMIN y no ya miembros)
@@ -420,9 +466,24 @@ export default function ProjectDetailsPage() {
   // -------------------------------------------------------------
   // ACCIONES DEL PIPELINE
   // -------------------------------------------------------------
-  const handleMoveLeadStage = (leadId: string, targetStageId: string) => {
+  const handleMoveLeadStage = async (leadId: string, targetStageId: string) => {
+    // Actualización optimista
     const updated = leads.map((l) => (l.id === leadId ? { ...l, stageId: targetStageId } : l));
     saveLeadsState(updated);
+    
+    // Impactar en backend
+    try {
+      const res = await fetchWithAuth(`/sales/project/${projectId}/leads/${leadId}/stage`, {
+        method: 'POST',
+        body: JSON.stringify({ stageId: targetStageId }),
+      });
+      if (!res.ok) {
+        // Revertir en caso de error
+        loadLeads();
+      }
+    } catch {
+      loadLeads();
+    }
   };
 
   const handleCreateLead = (e: React.FormEvent) => {
@@ -458,7 +519,6 @@ export default function ProjectDetailsPage() {
     const newStage: PipelineStageConfig = {
       id: stageId,
       name: newStageName.trim(),
-      probability: Math.min(100, Math.max(0, Number(newStageProb))),
       color: newStageColor,
     };
     setPipelineStages((prev) => [...prev, newStage]);
@@ -501,6 +561,73 @@ export default function ProjectDetailsPage() {
       setSaveErrorMsg(err instanceof Error ? err.message : 'Error inesperado');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Cargar configuración de Hotmart y túnel guardado
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('gs_tunnel_url');
+      if (stored) setTunnelUrl(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isHotmartModalOpen && projectId) {
+      fetchWithAuth(`/integrations/config/${projectId}?provider=HOTMART`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data) {
+            if (data.credentialsEnc) setHotmartSecret(data.credentialsEnc);
+            if (data.validFrom) {
+              try {
+                setHotmartDateFilter(new Date(data.validFrom).toISOString().split('T')[0] || '');
+              } catch {
+                // ignore
+              }
+            }
+            if (typeof data.ignoreSubsequent === 'boolean') {
+              setHotmartIgnoreSubsequent(data.ignoreSubsequent);
+            }
+          }
+        })
+        .catch(() => null);
+    }
+  }, [isHotmartModalOpen, projectId]);
+
+  const handleSaveHotmartConfig = async () => {
+    if (!projectId) return;
+    setIsSavingHotmart(true);
+    try {
+      if (typeof window !== 'undefined' && tunnelUrl) {
+        localStorage.setItem('gs_tunnel_url', tunnelUrl.trim());
+      }
+      const res = await fetchWithAuth(`/integrations/config/${projectId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'HOTMART',
+          credentialsEnc: hotmartSecret.trim(),
+          validFrom: hotmartDateFilter ? hotmartDateFilter : null,
+          ignoreSubsequent: hotmartIgnoreSubsequent,
+          isActive: true,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Error al persistir la configuración de Hotmart.');
+      }
+
+      setHotmartSavedSuccess(true);
+      setTimeout(() => {
+        setHotmartSavedSuccess(false);
+        setIsHotmartModalOpen(false);
+      }, 1000);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Error inesperado al guardar');
+    } finally {
+      setIsSavingHotmart(false);
     }
   };
 
@@ -838,19 +965,49 @@ export default function ProjectDetailsPage() {
   // -------------------------------------------------------------
   // GESTIÓN DE PRODUCTOS (SOLO ADMIN / SUPER_ADMIN)
   // -------------------------------------------------------------
-  const handleAddProduct = async (e: React.FormEvent) => {
+  const handleOpenNewProduct = () => {
+    setEditingProduct(null);
+    setNewProdName('');
+    setNewProdOfferCode('');
+    setNewProdSck('');
+    setNewProdOwnerCloserId('');
+    setNewProdExternalLabel('');
+    setNewProdPrice(0);
+    setNewProdInstallments(1);
+    setNewProdCurrency('USD');
+    setProductFormError(null);
+    setIsProductModalOpen(true);
+  };
+
+  const handleOpenEditProduct = (product: ProjectProduct) => {
+    setEditingProduct(product);
+    setNewProdName(product.name);
+    setNewProdOfferCode(product.offerCode || '');
+    setNewProdSck(product.sck || '');
+    setNewProdOwnerCloserId(product.ownerCloserId || '');
+    setNewProdExternalLabel(product.externalLabel || '');
+    setNewProdPrice(product.price);
+    setNewProdInstallments(product.installments || 1);
+    setNewProdCurrency(product.currency || 'USD');
+    setProductFormError(null);
+    setIsProductModalOpen(true);
+  };
+
+  const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProdName.trim() || !projectId) return;
     if (!isAdminOrSuper) {
-      alert('Solo los Administradores de la plataforma pueden agregar productos al catálogo.');
+      alert('Solo los Administradores de la plataforma pueden gestionar productos del catálogo.');
       return;
     }
     
     // Validación: Código de oferta único entre productos activos
     if (newProdOfferCode.trim()) {
-      const existingActive = products.find(p => p.active && p.offerCode === newProdOfferCode.trim());
+      const existingActive = products.find(
+        p => p.active && p.offerCode === newProdOfferCode.trim() && (!editingProduct || p.id !== editingProduct.id)
+      );
       if (existingActive) {
-        setProductFormError(`Debe desactivar el producto existente (${existingActive.name}) antes de crear uno nuevo con el mismo código de oferta.`);
+        setProductFormError(`Debe desactivar el producto existente (${existingActive.name}) antes de usar el mismo código de oferta.`);
         return;
       }
     }
@@ -858,35 +1015,45 @@ export default function ProjectDetailsPage() {
     setIsAddingProd(true);
 
     try {
-      const res = await fetchWithAuth(`/projects/${projectId}/products`, {
-        method: 'POST',
+      const url = editingProduct 
+        ? `/projects/${projectId}/products/${editingProduct.id}`
+        : `/projects/${projectId}/products`;
+      const method = editingProduct ? 'PATCH' : 'POST';
+
+      const res = await fetchWithAuth(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: newProdName.trim(),
-          offerCode: newProdOfferCode.trim() || undefined,
-          sku: newProdSku.trim() || undefined,
+          offerCode: newProdOfferCode.trim() ? newProdOfferCode.trim() : null,
+          sck: newProdSck.trim() ? newProdSck.trim() : null,
           price: Number(newProdPrice),
           installments: Number(newProdInstallments) || 1,
           currency: newProdCurrency.toUpperCase(),
-          ownerCloserId: newProdOwnerCloserId || undefined,
-          externalLabel: newProdExternalLabel.trim() || undefined,
-          active: true,
+          ownerCloserId: newProdOwnerCloserId.trim() ? newProdOwnerCloserId.trim() : null,
+          externalLabel: newProdExternalLabel.trim() ? newProdExternalLabel.trim() : null,
+          active: editingProduct ? editingProduct.active : true,
         }),
       });
 
       if (!res.ok) {
-        throw new Error('Error al agregar el producto al catálogo');
+        throw new Error(editingProduct ? 'Error al actualizar el producto' : 'Error al agregar el producto al catálogo');
       }
 
-      const added = await res.json();
-      setProducts((prev) => [...prev, added]);
+      const saved = await res.json();
+      if (editingProduct) {
+        setProducts((prev) => prev.map((p) => (p.id === saved.id ? { ...p, ...saved } : p)));
+      } else {
+        setProducts((prev) => [...prev, saved]);
+      }
+      setEditingProduct(null);
       setNewProdName('');
-      setNewProdSku('');
       setNewProdOfferCode('');
+      setNewProdSck('');
       setNewProdOwnerCloserId('');
       setNewProdExternalLabel('');
       setNewProdInstallments(1);
-      setIsProductModalOpen(false); // Cerrar modal al guardar exitosamente
+      setIsProductModalOpen(false);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error inesperado');
     } finally {
@@ -899,16 +1066,21 @@ export default function ProjectDetailsPage() {
       alert('Solo los Administradores de la plataforma pueden eliminar productos.');
       return;
     }
-    if (!confirm('¿Deseas eliminar este producto del catálogo?')) return;
+    const product = products.find((p) => p.id === productId);
+    const prodName = product?.name || 'este producto';
+    if (!confirm(`¿Deseas eliminar '${prodName}' del catálogo?`)) return;
     try {
       const res = await fetchWithAuth(`/projects/${projectId}/products/${productId}`, {
         method: 'DELETE',
       });
-      if (res.ok) {
-        setProducts((prev) => prev.filter((p) => p.id !== productId));
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        const errorMsg = errorData?.message || 'Error al eliminar el producto';
+        throw new Error(Array.isArray(errorMsg) ? errorMsg.join(', ') : errorMsg);
       }
-    } catch {
-      alert('No se pudo eliminar el producto');
+      setProducts((prev) => prev.filter((p) => p.id !== productId));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'No se pudo eliminar el producto');
     }
   };
 
@@ -1021,7 +1193,8 @@ export default function ProjectDetailsPage() {
 
   // Copiar URL de webhook e id
   const copyWebhookUrl = () => {
-    const url = `https://api.growthshell.com/webhooks/v1/inbound/${projectId}`;
+    const baseHost = tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthshell.com';
+    const url = `${baseHost}/integrations/hotmart/webhook/${projectId}`;
     navigator.clipboard.writeText(url);
     setCopiedWebhookUrl(true);
     setTimeout(() => setCopiedWebhookUrl(false), 2500);
@@ -1035,10 +1208,34 @@ export default function ProjectDetailsPage() {
   };
 
   // -------------------------------------------------------------
+  // ENRICHMENT: Resolver closerName para cada lead usando los miembros del proyecto
+  // -------------------------------------------------------------
+  const enrichedLeads = useMemo(() => {
+    // Construir mapa: userId -> nombre para resolución rápida
+    const userMap = new Map<string, string>(
+      allUsers.map((u) => [u.id, u.fullName || u.email || u.id])
+    );
+    const memberMap = new Map<string, string>(
+      members.map((m) => [m.userId, m.userName || m.userEmail || m.userId])
+    );
+    return leads.map((lead) => {
+      const closerId = lead.closerId || lead.latestTransaction?.closerId;
+      const resolvedName = closerId
+        ? (memberMap.get(closerId) || userMap.get(closerId) || null)
+        : null;
+      return {
+        ...lead,
+        closerName: resolvedName || lead.closerName || 'Sin closer',
+        closerId: closerId || undefined,
+      };
+    });
+  }, [leads, members, allUsers]);
+
+  // -------------------------------------------------------------
   // FILTRADO DE LEADS (PARA BASE DE LEADS Y PIPELINE)
   // -------------------------------------------------------------
   const filteredLeads = useMemo(() => {
-    return leads.filter((l) => {
+    return enrichedLeads.filter((l) => {
       const matchSearch =
         leadSearch === '' ||
         l.fullName.toLowerCase().includes(leadSearch.toLowerCase()) ||
@@ -1051,24 +1248,24 @@ export default function ProjectDetailsPage() {
 
       return matchSearch && matchCloser && matchStage;
     });
-  }, [leads, leadSearch, closerFilter, stageFilter]);
+  }, [enrichedLeads, leadSearch, closerFilter, stageFilter, paymentMethodFilter]);
 
   // Cálculos de métricas del proyecto
   const metricsCalc = useMemo(() => {
-    const totalWon = leads
+    const totalWon = enrichedLeads
       .filter((l) => l.stageId === 'won')
       .reduce((sum, l) => sum + l.estimatedValue, 0);
 
     const targetRevenue = goalsConfigState.monthlyTargetRevenue || 50000;
     const progressPercent = targetRevenue > 0 ? Math.min(100, Math.round((totalWon / targetRevenue) * 100)) : 0;
-    const wonCount = leads.filter((l) => l.stageId === 'won').length;
-    const closedCount = leads.filter((l) => l.stageId === 'won' || l.stageId === 'lost').length;
+    const wonCount = enrichedLeads.filter((l) => l.stageId === 'won').length;
+    const closedCount = enrichedLeads.filter((l) => l.stageId === 'won' || l.stageId === 'lost').length;
     const conversionRate = closedCount > 0 ? Math.round((wonCount / closedCount) * 100) : wonCount > 0 ? 100 : 0;
     const averageTicket = wonCount > 0 ? Math.round(totalWon / wonCount) : 997;
 
-    // Desglose por Closer
+    // Desglose por Closer (usando enrichedLeads que ya tiene closerName resuelto)
     const closersStatsMap = new Map<string, { calls: number; won: number; revenue: number }>();
-    leads.forEach((l) => {
+    enrichedLeads.forEach((l) => {
       const cName = l.closerName || 'Por Asignar';
       const current = closersStatsMap.get(cName) || { calls: 0, won: 0, revenue: 0 };
       current.calls += 1;
@@ -1097,7 +1294,7 @@ export default function ProjectDetailsPage() {
       averageTicket,
       closersRanking,
     };
-  }, [leads, goalsConfigState.monthlyTargetRevenue, commissionConfigState.defaultCloserPercentage]);
+  }, [enrichedLeads, goalsConfigState.monthlyTargetRevenue, commissionConfigState.defaultCloserPercentage]);
 
   // RENDER: CARGA Y ERROR
   if (isLoading) {
@@ -1286,6 +1483,21 @@ export default function ProjectDetailsPage() {
           {effectiveRole !== 'CLOSER' && (
             <button
               type="button"
+              onClick={() => setMainView('transactions')}
+              className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
+                mainView === 'transactions'
+                  ? 'border-primary text-primary shadow-[0_4px_12px_rgba(245,158,11,0.15)]'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Activity size={15} />
+              <span>Transacciones</span>
+            </button>
+          )}
+
+          {effectiveRole !== 'CLOSER' && (
+            <button
+              type="button"
               onClick={() => setMainView('settings')}
               className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
                 mainView === 'settings'
@@ -1306,23 +1518,26 @@ export default function ProjectDetailsPage() {
           <div className="space-y-4 animate-in fade-in-50">
             {/* Filtro rápido por closer */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card/40 p-3 rounded-xl border border-border/60">
-              <div className="flex items-center gap-2">
-                <Filter size={14} className="text-primary" />
-                <span className="text-xs font-semibold text-foreground">Filtrar por Closer Asignado:</span>
-                <Select value={closerFilter} onValueChange={setCloserFilter}>
-                  <SelectTrigger className="bg-[#0B0D13] text-xs h-8 w-44">
-                    <SelectValue placeholder="Todos los Closers" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">Todos los Closers</SelectItem>
-                    <SelectItem value="Por Asignar">Sin Asignar</SelectItem>
-                    {closersInProject.map((c) => (
-                      <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
-                        {c.userName || c.userEmail}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Filter size={14} className="text-primary" />
+                  <span className="text-xs font-semibold text-foreground">Closer:</span>
+                  <Select value={closerFilter} onValueChange={setCloserFilter}>
+                    <SelectTrigger className="bg-[#0B0D13] text-xs h-8 w-44">
+                      <SelectValue placeholder="Todos los Closers" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">Todos los Closers</SelectItem>
+                      <SelectItem value="Por Asignar">Sin Asignar</SelectItem>
+                      {closersInProject.map((c) => (
+                        <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
+                          {c.userName || c.userEmail}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
               </div>
 
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -1333,15 +1548,23 @@ export default function ProjectDetailsPage() {
             </div>
 
             {/* TABLERO KANBAN DE ETAPAS */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5 items-start overflow-x-auto pb-4">
+            <div className="flex flex-nowrap items-start gap-4 overflow-x-auto pb-6 pt-2 custom-scrollbar">
               {pipelineStages.map((stage) => {
-                const stageLeads = filteredLeads.filter((l) => l.stageId === stage.id);
+                let stageLeads = filteredLeads.filter((l) => l.stageId === stage.id);
+                
+                // Aplicar el filtro de cuotas SOLO en la etapa "Ganado"
+                if (stage.id === 'won' && paymentMethodFilter !== 'ALL') {
+                  stageLeads = stageLeads.filter(l => (l.installments || 1).toString() === paymentMethodFilter);
+                }
+
                 const stageTotalVal = stageLeads.reduce((sum, l) => sum + l.estimatedValue, 0);
 
                 return (
                   <div
                     key={stage.id}
-                    className="flex flex-col rounded-xl border border-border/80 bg-[#0B0D13] overflow-hidden min-w-[220px]"
+                    className="flex-none flex flex-col rounded-xl border border-border/80 bg-[#0B0D13] shadow-md w-[300px] shrink-0 transition-colors"
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, stage.id)}
                   >
                     {/* Cabecera de la etapa */}
                     <div
@@ -1350,60 +1573,125 @@ export default function ProjectDetailsPage() {
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-xs text-foreground truncate">{stage.name}</span>
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
-                          {stageLeads.length}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          {stage.id === 'won' && (
+                            <Select value={paymentMethodFilter} onValueChange={setPaymentMethodFilter}>
+                              <SelectTrigger className="bg-[#0E1118] text-[10px] h-6 px-2 w-auto min-w-[70px] border-border/60">
+                                <SelectValue placeholder="Cuotas" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="ALL" className="text-[10px]">Todas</SelectItem>
+                                <SelectItem value="1" className="text-[10px]">1 Cuota</SelectItem>
+                                <SelectItem value="2" className="text-[10px]">2 Cuotas</SelectItem>
+                                <SelectItem value="3" className="text-[10px]">3 Cuotas</SelectItem>
+                                <SelectItem value="4" className="text-[10px]">4 Cuotas</SelectItem>
+                                <SelectItem value="5" className="text-[10px]">5 Cuotas</SelectItem>
+                                <SelectItem value="6" className="text-[10px]">6 Cuotas</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
+                            {stageLeads.length}
+                          </Badge>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1 font-mono">
-                        <span>{stage.probability}% prob.</span>
+                      <div className="flex items-center justify-end text-[10px] text-muted-foreground mt-1 font-mono">
                         <span className="text-primary font-bold">${stageTotalVal.toLocaleString()}</span>
                       </div>
                     </div>
 
                     {/* Lista de tarjetas en la etapa */}
-                    <div className="p-2 space-y-2.5 min-h-[300px] max-h-[550px] overflow-y-auto">
+                    <div className="p-2 space-y-3 min-h-[350px] max-h-[600px] overflow-y-auto custom-scrollbar">
                       {stageLeads.length === 0 ? (
-                        <div className="text-center py-8 text-[11px] text-muted-foreground/60">
+                        <div className="flex items-center justify-center h-24 text-[12px] text-muted-foreground/60 border border-dashed border-border/40 rounded-lg mx-1 mt-1">
                           Sin prospectos
                         </div>
                       ) : (
-                        stageLeads.map((lead) => (
-                          <div
-                            key={lead.id}
-                            className="p-3 rounded-lg border border-border/70 bg-card/40 hover:border-primary/40 transition-all space-y-2 shadow-sm"
-                          >
-                            <div className="flex items-start justify-between gap-1">
-                              <span className="font-bold text-xs text-foreground leading-tight">
-                                {lead.fullName}
-                              </span>
-                              <span className="font-mono text-[11px] text-primary font-bold">
-                                ${lead.estimatedValue}
-                              </span>
-                            </div>
+                        stageLeads.map((lead) => {
+                          const cleanPhone = lead.phone.replace(/[^0-9]/g, '');
+                          return (
+                            <div
+                              key={lead.id}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, lead.id)}
+                              onClick={() => {
+                                if (lead.latestTransaction) {
+                                  setSelectedTransaction({
+                                    ...lead.latestTransaction,
+                                    closerName: lead.closerName
+                                  });
+                                } else {
+                                  setSelectedLead(lead as LeadData);
+                                }
+                              }}
+                              className="p-3.5 rounded-xl border border-border/70 bg-card/40 hover:border-primary/50 hover:bg-card transition-all space-y-3 shadow-sm cursor-grab active:cursor-grabbing group relative"
+                            >
+                              <div className="flex items-start justify-between gap-1">
+                                <span className="font-bold text-[13px] text-foreground leading-tight line-clamp-1">
+                                  {lead.fullName}
+                                </span>
+                                <span className="font-mono text-xs text-primary font-bold whitespace-nowrap bg-primary/10 px-1.5 py-0.5 rounded">
+                                  ${lead.estimatedValue}
+                                </span>
+                              </div>
 
-                            <p className="text-[10px] text-muted-foreground truncate">
-                              {lead.productName}
-                            </p>
+                              <div className="flex flex-col gap-1.5">
+                                {lead.phone ? (
+                                  <a
+                                    href={`https://wa.me/${cleanPhone}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="w-fit flex items-center gap-1.5 text-[11px] text-emerald-400/90 hover:text-emerald-400 hover:bg-emerald-900/30 px-1.5 py-0.5 rounded transition-colors"
+                                  >
+                                    <Phone size={10} />
+                                    {lead.phone}
+                                  </a>
+                                ) : (
+                                  <span className="text-[11px] text-muted-foreground/70 px-1.5">Sin teléfono</span>
+                                )}
 
-                            <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10px]">
-                              <span className="text-muted-foreground truncate max-w-[100px]">
-                                {lead.closerName}
-                              </span>
-                              <Select value={lead.stageId} onValueChange={(val: string) => handleMoveLeadStage(lead.id, val)}>
-                                <SelectTrigger className="h-6 text-[10px] bg-[#0E1118] border-border/60 px-1 py-0 w-24">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {pipelineStages.map((s) => (
-                                    <SelectItem key={s.id} value={s.id}>
-                                      {s.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                                <div className="flex items-center justify-between text-[11px] px-1.5">
+                                  <div className="flex items-center gap-1.5 text-muted-foreground truncate" title={lead.productName}>
+                                    <Package size={10} />
+                                    <span>{lead.productName || 'Sin producto'}</span>
+                                  </div>
+                                  {lead.offerCode && (
+                                    <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-muted/30">
+                                      {lead.offerCode}
+                                    </Badge>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-1.5 text-[11px] px-1.5">
+                                  <User size={10} className="text-muted-foreground" />
+                                  <span className="text-muted-foreground font-medium truncate">{lead.closerName || 'Sin closer'}</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-end pt-2 border-t border-border/40">
+                                <Select 
+                                  value={lead.stageId} 
+                                  onValueChange={(val: string) => handleMoveLeadStage(lead.id, val)}
+                                >
+                                  <SelectTrigger 
+                                    className="h-6 text-[10px] bg-[#0E1118]/80 border-border/60 hover:border-primary/30 px-2 py-0 w-auto min-w-[120px]"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {pipelineStages.map((s) => (
+                                      <SelectItem key={s.id} value={s.id}>
+                                        {s.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
                             </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -1426,6 +1714,7 @@ export default function ProjectDetailsPage() {
                   placeholder="Buscar por nombre, email o teléfono..."
                   value={leadSearch}
                   onChange={(e) => setLeadSearch(e.target.value)}
+                  onFocus={(e) => e.target.select()}
                   className="pl-9 bg-[#0B0D13] border-border text-xs h-9"
                 />
               </div>
@@ -1499,23 +1788,28 @@ export default function ProjectDetailsPage() {
                       const cleanPhone = lead.phone.replace(/[^0-9]/g, '');
 
                       return (
-                        <TableRow key={lead.id} className="border-border/40">
+                        <TableRow 
+                          key={lead.id} 
+                          className="border-border/40 hover:bg-card/40 cursor-pointer"
+                          onClick={() => setSelectedLead(lead as LeadData)}
+                        >
                           <TableCell className="py-2.5">
                             <div>
-                              <span className="font-bold text-xs text-foreground block">{lead.fullName}</span>
+                              <span className="font-bold text-xs text-foreground block group-hover:text-primary transition-colors">{lead.fullName}</span>
                               <span className="text-[10px] text-muted-foreground block">{lead.email}</span>
                             </div>
                           </TableCell>
                           <TableCell className="py-2.5">
-                            <a
-                              href={`https://wa.me/${cleanPhone}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-400 hover:underline bg-emerald-950/30 px-2 py-0.5 rounded border border-emerald-500/20"
-                            >
-                              <Phone size={10} />
-                              {lead.phone}
-                            </a>
+                              <a
+                                href={`https://wa.me/${cleanPhone}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-400 hover:underline bg-emerald-950/30 px-2 py-0.5 rounded border border-emerald-500/20"
+                              >
+                                <Phone size={10} />
+                                {lead.phone}
+                              </a>
                           </TableCell>
                           <TableCell className="py-2.5">
                             <Badge
@@ -1538,7 +1832,7 @@ export default function ProjectDetailsPage() {
                           <TableCell className="text-right font-mono font-bold text-xs text-primary py-2.5">
                             ${lead.estimatedValue} USD
                           </TableCell>
-                          <TableCell className="text-right py-2.5">
+                          <TableCell className="text-right py-2.5" onClick={(e) => e.stopPropagation()}>
                             <Select value={lead.stageId} onValueChange={(val: string) => handleMoveLeadStage(lead.id, val)}>
                               <SelectTrigger className="h-7 text-[10px] bg-[#0E1118] border-border/60">
                                 <SelectValue />
@@ -1695,6 +1989,13 @@ export default function ProjectDetailsPage() {
               projectCurrency={project.goalsConfig?.currency || goalsConfigState.currency || 'USD'}
             />
           </div>
+        )}
+
+        {/* ============================================================= */}
+        {/* VISTA 6: TRANSACCIONES                                        */}
+        {/* ============================================================= */}
+        {mainView === 'transactions' && (
+          <TransactionsView projectId={projectId} />
         )}
 
         {/* ============================================================= */}
@@ -1946,13 +2247,19 @@ export default function ProjectDetailsPage() {
                       <TableRow className="border-border/60">
                         <TableHead className="text-[11px] font-bold">Color</TableHead>
                         <TableHead className="text-[11px] font-bold">Nombre de la Etapa</TableHead>
-                        <TableHead className="text-[11px] font-bold text-center">Probabilidad %</TableHead>
                         <TableHead className="text-[11px] font-bold text-right">Acción</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {pipelineStages.map((stage) => (
-                        <TableRow key={stage.id} className="border-border/40">
+                      {pipelineStages.map((stage, index) => (
+                        <TableRow 
+                          key={stage.id} 
+                          className="border-border/40 cursor-grab active:cursor-grabbing"
+                          draggable
+                          onDragStart={(e) => handleStageDragStart(e, index)}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => handleStageDrop(e, index)}
+                        >
                           <TableCell className="w-12 py-2">
                             <input
                               type="color"
@@ -1975,22 +2282,8 @@ export default function ProjectDetailsPage() {
                                   prev.map((s) => (s.id === stage.id ? { ...s, name: newName } : s))
                                 );
                               }}
-                              className="bg-[#0E1118] text-xs h-7 max-w-sm font-semibold"
-                            />
-                          </TableCell>
-                          <TableCell className="text-center py-2">
-                            <Input
-                              type="number"
-                              min="0"
-                              max="100"
-                              value={stage.probability}
-                              onChange={(e) => {
-                                const newProb = Number(e.target.value);
-                                setPipelineStages((prev) =>
-                                  prev.map((s) => (s.id === stage.id ? { ...s, probability: newProb } : s))
-                                );
-                              }}
-                              className="bg-[#0E1118] text-xs h-7 w-20 mx-auto font-mono text-center"
+                              onFocus={(e) => e.target.select()}
+                              className="bg-[#0E1118] text-xs h-7 max-w-sm font-semibold cursor-text"
                             />
                           </TableCell>
                           <TableCell className="text-right py-2">
@@ -2024,19 +2317,8 @@ export default function ProjectDetailsPage() {
                         placeholder="Ej. Negociación / Envío de Contrato"
                         value={newStageName}
                         onChange={(e) => setNewStageName(e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         className="bg-[#0B0D13] text-xs h-8"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Probabilidad %</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={newStageProb}
-                        onChange={(e) => setNewStageProb(Number(e.target.value))}
-                        className="bg-[#0B0D13] text-xs h-8 font-mono"
                       />
                     </div>
 
@@ -2084,7 +2366,7 @@ export default function ProjectDetailsPage() {
                     <div className="flex items-center gap-2">
                       <Input
                         readOnly
-                        value={`https://api.growthshell.com/webhooks/v1/inbound/${projectId}`}
+                        value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthshell.com')}/integrations/hotmart/webhook/${projectId}`}
                         className="bg-[#0B0D13] font-mono text-[11px] h-8 text-muted-foreground select-all"
                       />
                       <Button
@@ -2176,6 +2458,7 @@ export default function ProjectDetailsPage() {
                       <Input
                         value={genName}
                         onChange={(e) => setGenName(e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         disabled={isDirector || isSaving}
                         className="bg-card text-xs h-9"
                         required
@@ -2187,6 +2470,7 @@ export default function ProjectDetailsPage() {
                       <Input
                         value={genSlug}
                         onChange={(e) => setGenSlug(e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         disabled={isDirector || isSaving}
                         className="bg-card text-xs h-9 font-mono"
                         required
@@ -2199,6 +2483,7 @@ export default function ProjectDetailsPage() {
                     <Input
                       value={genDesc}
                       onChange={(e) => setGenDesc(e.target.value)}
+                      onFocus={(e) => e.target.select()}
                       disabled={isDirector || isSaving}
                       className="bg-card text-xs h-9"
                       placeholder="Detalles sobre el producto, nicho o campaña"
@@ -2261,10 +2546,7 @@ export default function ProjectDetailsPage() {
                       <Button
                         variant="gold"
                         size="sm"
-                        onClick={() => {
-                          setProductFormError(null);
-                          setIsProductModalOpen(true);
-                        }}
+                        onClick={handleOpenNewProduct}
                         className="text-xs h-8 font-bold"
                       >
                         <Plus size={13} className="mr-1" />
@@ -2278,8 +2560,8 @@ export default function ProjectDetailsPage() {
                       <TableHeader className="bg-card/60">
                         <TableRow className="border-border/60">
                           <TableHead className="text-[11px] font-bold">Nombre del Producto</TableHead>
-                          <TableHead className="text-[11px] font-bold">SKU</TableHead>
                           <TableHead className="text-[11px] font-bold">Oferta</TableHead>
+                          <TableHead className="text-[11px] font-bold">SCK</TableHead>
                           <TableHead className="text-[11px] font-bold text-right">Precio</TableHead>
                           <TableHead className="text-[11px] font-bold text-center">Cuotas</TableHead>
                           <TableHead className="text-[11px] font-bold text-center">Estado</TableHead>
@@ -2289,7 +2571,7 @@ export default function ProjectDetailsPage() {
                       <TableBody>
                         {products.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={isAdminOrSuper ? 6 : 5} className="text-center py-6 text-xs text-muted-foreground">
+                            <TableCell colSpan={isAdminOrSuper ? 7 : 6} className="text-center py-6 text-xs text-muted-foreground">
                               No hay productos en el catálogo aún.
                             </TableCell>
                           </TableRow>
@@ -2301,8 +2583,8 @@ export default function ProjectDetailsPage() {
                                 {p.ownerCloserId && <span className="block text-[10px] text-blue-400">Propietario: {allUsers.find(u => u.id === p.ownerCloserId)?.fullName || p.ownerCloserId}</span>}
                                 {p.externalLabel && <span className="block text-[10px] text-purple-400">Label: {p.externalLabel}</span>}
                               </TableCell>
-                              <TableCell className="text-xs font-mono text-muted-foreground py-2">{p.sku || '—'}</TableCell>
                               <TableCell className="text-xs font-mono text-muted-foreground py-2">{p.offerCode || '—'}</TableCell>
+                              <TableCell className="text-xs font-mono text-emerald-400 py-2">{p.sck || '—'}</TableCell>
                               <TableCell className="text-xs font-mono font-bold text-right py-2 text-primary">
                                 ${p.price} {p.currency}
                               </TableCell>
@@ -2327,14 +2609,26 @@ export default function ProjectDetailsPage() {
                               </TableCell>
                               {isAdminOrSuper && (
                                 <TableCell className="text-right py-2">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleDeleteProduct(p.id)}
-                                    className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
-                                  >
-                                    <Trash2 size={13} />
-                                  </Button>
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleOpenEditProduct(p)}
+                                      className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                                      title="Editar producto"
+                                    >
+                                      <Pencil size={13} />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleDeleteProduct(p.id)}
+                                      className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
+                                      title="Eliminar producto"
+                                    >
+                                      <Trash2 size={13} />
+                                    </Button>
+                                  </div>
                                 </TableCell>
                               )}
                             </TableRow>
@@ -2350,7 +2644,7 @@ export default function ProjectDetailsPage() {
                         <DialogHeader>
                           <DialogTitle className="flex items-center gap-2">
                             <Sparkles size={18} className="text-primary" />
-                            Añadir Producto al Catálogo
+                            {editingProduct ? 'Editar Producto del Catálogo' : 'Añadir Producto al Catálogo'}
                           </DialogTitle>
                         </DialogHeader>
 
@@ -2361,39 +2655,43 @@ export default function ProjectDetailsPage() {
                           </Alert>
                         )}
 
-                        <form onSubmit={handleAddProduct} className="space-y-4 pt-2">
+                        <form onSubmit={handleSaveProduct} className="space-y-4 pt-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Nombre del Producto <span className="text-primary">*</span></Label>
+                            <Input
+                              placeholder="Ej: Mentoria Master VIP $900"
+                              value={newProdName}
+                              onChange={(e) => setNewProdName(e.target.value)}
+                              onFocus={(e) => e.target.select()}
+                              className="bg-[#0B0D13] text-xs h-9"
+                              required
+                            />
+                          </div>
+
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">Nuevo Producto <span className="text-primary">*</span></Label>
+                              <Label className="text-[11px] text-muted-foreground">Código de Oferta (Hotmart)</Label>
                               <Input
-                                placeholder="Ej: Mentoria Master VIP $900"
-                                value={newProdName}
-                                onChange={(e) => setNewProdName(e.target.value)}
-                                className="bg-[#0B0D13] text-xs h-9"
-                                required
+                                placeholder="Ej: 9d1uc0dq"
+                                value={newProdOfferCode}
+                                onChange={(e) => setNewProdOfferCode(e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                className="bg-[#0B0D13] text-xs h-9 font-mono"
                               />
                             </div>
                             <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">Código de Oferta</Label>
+                              <Label className="text-[11px] text-muted-foreground">SCK / Tracking (Opcional)</Label>
                               <Input
-                                placeholder="Ej: gsi35uek"
-                                value={newProdOfferCode}
-                                onChange={(e) => setNewProdOfferCode(e.target.value)}
+                                placeholder="Ej: Agustin"
+                                value={newProdSck}
+                                onChange={(e) => setNewProdSck(e.target.value)}
+                                onFocus={(e) => e.target.select()}
                                 className="bg-[#0B0D13] text-xs h-9 font-mono"
                               />
                             </div>
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">Identificador / SCK</Label>
-                              <Input
-                                placeholder="Ej: closer-diego"
-                                value={newProdSku}
-                                onChange={(e) => setNewProdSku(e.target.value)}
-                                className="bg-[#0B0D13] text-xs h-9 font-mono"
-                              />
-                            </div>
                             <div className="space-y-1">
                               <Label className="text-[11px] text-muted-foreground">Precio <span className="text-primary">*</span></Label>
                               <Input
@@ -2460,6 +2758,7 @@ export default function ProjectDetailsPage() {
                                 placeholder="Ej. Productor Secundario"
                                 value={newProdExternalLabel}
                                 onChange={(e) => setNewProdExternalLabel(e.target.value)}
+                                onFocus={(e) => e.target.select()}
                                 className="bg-[#0B0D13] text-xs h-9"
                               />
                             </div>
@@ -2480,8 +2779,14 @@ export default function ProjectDetailsPage() {
                               disabled={isAddingProd || !newProdName.trim()}
                               className="text-xs h-9 font-bold"
                             >
-                              {isAddingProd ? <RotateCw size={13} className="animate-spin mr-1" /> : <Plus size={13} className="mr-1" />}
-                              Agregar Producto
+                              {isAddingProd ? (
+                                <RotateCw size={13} className="animate-spin mr-1" />
+                              ) : editingProduct ? (
+                                <Save size={13} className="mr-1" />
+                              ) : (
+                                <Plus size={13} className="mr-1" />
+                              )}
+                              {editingProduct ? 'Guardar Cambios' : 'Agregar Producto'}
                             </Button>
                           </DialogFooter>
                         </form>
@@ -2818,6 +3123,7 @@ export default function ProjectDetailsPage() {
                                                         onChange={(e) =>
                                                           handleUpdateGroupGoalTier(group.id, goal.id, tier.id, 'revenueThreshold', Number(e.target.value))
                                                         }
+                                                        onFocus={(e) => e.target.select()}
                                                         disabled={isDirector || isSaving}
                                                         className="h-6 w-24 text-xs font-mono bg-[#0E1118]"
                                                       />
@@ -2846,6 +3152,7 @@ export default function ProjectDetailsPage() {
                                                       step="0.5"
                                                       value={tier.percentages.teamTotal}
                                                       onChange={(e) => handleUpdateGroupGoalTier(group.id, goal.id, tier.id, 'teamTotal', Number(e.target.value))}
+                                                      onFocus={(e) => e.target.select()}
                                                       disabled={isDirector || isSaving}
                                                       className={`h-6 text-xs font-mono bg-[#0E1118] ${tierError ? 'border-red-500/50 text-red-400' : 'text-primary'}`}
                                                     />
@@ -2859,6 +3166,7 @@ export default function ProjectDetailsPage() {
                                                       step="0.5"
                                                       value={tier.percentages.company}
                                                       onChange={(e) => handleUpdateGroupGoalTier(group.id, goal.id, tier.id, 'company', Number(e.target.value))}
+                                                      onFocus={(e) => e.target.select()}
                                                       disabled={isDirector || isSaving}
                                                       className="h-6 text-xs font-mono text-emerald-400 bg-[#0E1118]"
                                                     />
@@ -2872,6 +3180,7 @@ export default function ProjectDetailsPage() {
                                                       step="0.5"
                                                       value={tier.percentages.director}
                                                       onChange={(e) => handleUpdateGroupGoalTier(group.id, goal.id, tier.id, 'director', Number(e.target.value))}
+                                                      onFocus={(e) => e.target.select()}
                                                       disabled={isDirector || isSaving}
                                                       className="h-6 text-xs font-mono text-blue-400 bg-[#0E1118]"
                                                     />
@@ -2885,6 +3194,7 @@ export default function ProjectDetailsPage() {
                                                       step="0.5"
                                                       value={tier.percentages.closer}
                                                       onChange={(e) => handleUpdateGroupGoalTier(group.id, goal.id, tier.id, 'closer', Number(e.target.value))}
+                                                      onFocus={(e) => e.target.select()}
                                                       disabled={isDirector || isSaving}
                                                       className="h-6 text-xs font-mono text-violet-400 bg-[#0E1118]"
                                                     />
@@ -2898,6 +3208,7 @@ export default function ProjectDetailsPage() {
                                                       step="0.5"
                                                       value={tier.percentages.external}
                                                       onChange={(e) => handleUpdateGroupGoalTier(group.id, goal.id, tier.id, 'external', Number(e.target.value))}
+                                                      onFocus={(e) => e.target.select()}
                                                       disabled={isDirector || isSaving}
                                                       className="h-6 text-xs font-mono text-purple-400 bg-[#0E1118]"
                                                     />
@@ -2969,6 +3280,7 @@ export default function ProjectDetailsPage() {
                     placeholder="Ej. Santiago Benítez"
                     value={newLeadName}
                     onChange={(e) => setNewLeadName(e.target.value)}
+                    onFocus={(e) => e.target.select()}
                     className="h-9 text-xs"
                   />
                 </div>
@@ -2981,6 +3293,7 @@ export default function ProjectDetailsPage() {
                       placeholder="santiago@empresa.com"
                       value={newLeadEmail}
                       onChange={(e) => setNewLeadEmail(e.target.value)}
+                      onFocus={(e) => e.target.select()}
                       className="h-9 text-xs font-mono"
                     />
                   </div>
@@ -2990,6 +3303,7 @@ export default function ProjectDetailsPage() {
                       placeholder="+57 312 000 0000"
                       value={newLeadPhone}
                       onChange={(e) => setNewLeadPhone(e.target.value)}
+                      onFocus={(e) => e.target.select()}
                       className="h-9 text-xs font-mono"
                     />
                   </div>
@@ -3060,6 +3374,7 @@ export default function ProjectDetailsPage() {
                       min="0"
                       value={newLeadValue}
                       onChange={(e) => setNewLeadValue(Number(e.target.value))}
+                      onFocus={(e) => e.target.select()}
                       className="h-9 text-xs font-mono"
                     />
                   </div>
@@ -3086,45 +3401,104 @@ export default function ProjectDetailsPage() {
 
         {/* Modal de Configuración Hotmart */}
         <Dialog open={isHotmartModalOpen} onOpenChange={setIsHotmartModalOpen}>
-          <DialogContent className="max-w-md bg-[#0B0D13] border-border text-foreground">
+          <DialogContent className="max-w-lg bg-[#0B0D13] border-border text-foreground">
             <DialogHeader>
               <DialogTitle className="text-lg flex items-center gap-2">
                 Configuración de Hotmart
-                <Badge variant="success" className="text-[10px] uppercase">Webhook</Badge>
+                <Badge variant="success" className="text-[10px] uppercase">Webhook v2.0</Badge>
               </DialogTitle>
               <DialogDescription className="text-xs">
                 Ajusta los parámetros para recibir transacciones de Hotmart en este proyecto.
               </DialogDescription>
             </DialogHeader>
+
             <div className="space-y-4 py-2">
+              {/* Box de Modo Desarrollo / Túnel */}
+              <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-primary flex items-center gap-1.5">
+                    <Radio size={13} className="text-primary animate-pulse" />
+                    Túnel de Desarrollo (Sin Dominio Propio)
+                  </span>
+                  <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-mono">
+                    Localhost :3001
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Hotmart está en la nube y requiere una <strong>URL pública con HTTPS</strong>. En tu terminal ejecuta:{' '}
+                  <code className="text-foreground bg-black/60 px-1 py-0.5 rounded font-mono">npx localtunnel --port 3001</code> o{' '}
+                  <code className="text-foreground bg-black/60 px-1 py-0.5 rounded font-mono">ngrok http 3001</code>.
+                </p>
+                <div className="space-y-1 pt-1">
+                  <Label className="text-[10px] text-muted-foreground font-medium">URL base de tu túnel HTTPS:</Label>
+                  <Input
+                    placeholder="Ej. https://mi-tunel.loca.lt o https://xxxx.ngrok-free.app"
+                    value={tunnelUrl}
+                    onChange={(e) => setTunnelUrl(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    className="h-8 text-xs font-mono bg-black/50 border-border"
+                  />
+                </div>
+              </div>
+
+              {/* URL que se pega en Hotmart */}
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">URL del Webhook (Pega esto en Hotmart)</Label>
+                <Label className="text-xs text-muted-foreground flex items-center justify-between">
+                  <span>URL del Webhook (Pega exactamente esto en Hotmart Tools)</span>
+                  <span className="text-[10px] text-emerald-400 font-mono">POST / 200 OK</span>
+                </Label>
                 <div className="flex gap-2">
-                  <Input readOnly value={`https://api.growthshell.com/webhooks/hotmart/${projectId}`} className="h-9 text-xs font-mono bg-black/40" />
-                  <Button variant="outline" size="sm" className="h-9 px-3">
-                    <Copy size={14} />
+                  <Input
+                    readOnly
+                    value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthshell.com')}/integrations/hotmart/webhook/${projectId}`}
+                    className="h-9 text-xs font-mono bg-black/50 border-border text-foreground font-semibold select-all"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const url = `${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthshell.com')}/integrations/hotmart/webhook/${projectId}`;
+                      navigator.clipboard.writeText(url);
+                      setCopiedHotmartUrl(true);
+                      setTimeout(() => setCopiedHotmartUrl(false), 2000);
+                    }}
+                    className="h-9 px-3 flex-shrink-0 text-primary border-primary/30 hover:bg-primary/10"
+                  >
+                    {copiedHotmartUrl ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                   </Button>
                 </div>
               </div>
+
+              {/* Hottok */}
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">Hottok (Webhook Secret)</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-muted-foreground">Hottok (Código de Autenticación de Hotmart)</Label>
+                  <span className="text-[10px] text-muted-foreground italic">En Hotmart: Herramientas &gt; Webhook</span>
+                </div>
                 <Input
-                  type="password"
+                  type="text"
                   value={hotmartSecret}
                   onChange={(e) => setHotmartSecret(e.target.value)}
-                  placeholder="Ej: d8a9s8d9a8s9d8a9s8d9..."
-                  className="h-9 text-xs"
+                  onFocus={(e) => e.target.select()}
+                  placeholder="Ej: d8a9s8d9a8s9d8a9s8d9... o déjalo vacío si es prueba"
+                  className="h-9 text-xs font-mono"
                 />
               </div>
+
+              {/* Filtro de fecha */}
               <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">Ignorar transacciones anteriores a (Opcional)</Label>
                 <Input
                   type="date"
                   value={hotmartDateFilter}
                   onChange={(e) => setHotmartDateFilter(e.target.value)}
+                  onFocus={(e) => e.target.select()}
                   className="h-9 text-xs"
                 />
               </div>
+
+              {/* Checkbox ignorar cuotas subsecuentes */}
               <div className="flex items-center gap-3 pt-2">
                 <Checkbox
                   id="ignore-subs"
@@ -3133,16 +3507,52 @@ export default function ProjectDetailsPage() {
                 />
                 <div className="space-y-1 leading-none">
                   <Label htmlFor="ignore-subs" className="text-xs font-medium cursor-pointer">Ignorar cuotas subsecuentes</Label>
-                  <p className="text-[10px] text-muted-foreground">Solo creará la venta de la cuota inicial (recurrencia).</p>
+                  <p className="text-[10px] text-muted-foreground">Solo creará la venta de la cuota inicial (recurrencias y suscripciones).</p>
                 </div>
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" size="sm" onClick={() => setIsHotmartModalOpen(false)}>Cancelar</Button>
-              <Button variant="gold" size="sm" onClick={() => setIsHotmartModalOpen(false)}>Guardar Cambios</Button>
+
+            <DialogFooter className="pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsHotmartModalOpen(false)}
+                disabled={isSavingHotmart}
+              >
+                Cerrar
+              </Button>
+              <Button
+                variant="gold"
+                size="sm"
+                onClick={handleSaveHotmartConfig}
+                disabled={isSavingHotmart}
+                className="font-bold text-xs flex items-center gap-1.5"
+              >
+                {isSavingHotmart ? (
+                  <RotateCw size={13} className="animate-spin" />
+                ) : hotmartSavedSuccess ? (
+                  <CheckCircle2 size={13} className="text-emerald-300" />
+                ) : (
+                  <Save size={13} />
+                )}
+                <span>{hotmartSavedSuccess ? '¡Guardado!' : 'Guardar Configuración'}</span>
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <LeadDetailModal
+          isOpen={!!selectedLead}
+          onClose={() => setSelectedLead(null)}
+          lead={selectedLead}
+          stageName={selectedLead ? (pipelineStages.find(s => s.id === selectedLead.stageId)?.name || '') : ''}
+        />
+
+        <TransactionDetailModal
+          isOpen={!!selectedTransaction}
+          onClose={() => setSelectedTransaction(null)}
+          transaction={selectedTransaction}
+        />
       </div>
     </AdminShell>
   );

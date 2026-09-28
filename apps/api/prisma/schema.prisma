@@ -246,7 +246,7 @@ model Lead {
   phone           String?
   
   // Pipeline
-  pipelineStage   String    @default("new") @map("pipeline_stage")
+  pipelineStage   String    @default("uncontacted") @map("pipeline_stage")
   closerId        String?   @map("closer_id") @db.Uuid // Referencia lógica a auth.users(id)
   
   // Métricas rápidas cacheadas (opcional pero útil)
@@ -281,6 +281,9 @@ model Sale {
   // Información de Negocio
   productName      String    @map("product_name")
   productId        String?   @map("product_id")        // ID del producto en Hotmart
+  offerCode        String?   @map("offer_code")        // Código de oferta registrado
+  sck              String?   @map("sck")               // Source Checkout Key / Tracking
+  closerId         String?   @map("closer_id") @db.Uuid // Referencia lógica a auth.users(id)
   status           String    // 'APPROVED', 'REFUNDED', 'CHARGEBACK', 'CANCELED', 'BILLET_PRINTED', etc.
   
   // Valor financiero
@@ -290,6 +293,7 @@ model Sale {
   // Metadatos
   paymentMethod    String?   @map("payment_method")
   installments     Int?      @default(1)
+  metadata         Json?     @default("{}") @map("metadata") @db.JsonB
   
   // Trazabilidad
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -298,6 +302,7 @@ model Sale {
   // Garantiza que JAMÁS se procese la misma transacción dos veces
   @@unique([source, externalOrderId, externalTxnId])
   @@index([projectId, status])
+  @@index([projectId, closerId])
   @@map("sales")
   @@schema("sales")
 }

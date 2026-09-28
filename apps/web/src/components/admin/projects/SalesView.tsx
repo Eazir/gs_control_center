@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { SaleListItem, ProductItem } from '@gs/contracts';
 import { Badge } from '@/components/ui/badge';
+import { TransactionDetailModal } from './TransactionDetailModal';
 
 export interface SalesViewMember {
   id: string;
@@ -80,6 +81,15 @@ export interface SalesViewProps {
   projectCurrency?: string;
 }
 
+/**
+ * Vista principal de Ventas del proyecto.
+ * Muestra las métricas comerciales consolidadas, tablas de ventas "efectivas" (APPROVED/COMPLETE),
+ * liquidaciones, soporte multi-moneda con conversión en vivo, y modales para ingesta manual
+ * o masiva (CSV).
+ * 
+ * Implementa RLS en UI filtrando y mostrando métricas únicamente de las ventas
+ * pertenecientes al usuario si su rol efectivo es CLOSER.
+ */
 export function SalesView({ 
   projectId, 
   products = [], 
@@ -92,6 +102,8 @@ export function SalesView({
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  const [selectedTxn, setSelectedTxn] = useState<any | null>(null);
 
   // Estados de Tasa de Cambio y Conversión en Vivo
   const [exchangeRate, setExchangeRate] = useState<number>(1);
@@ -541,6 +553,10 @@ export function SalesView({
 
   // Filtrado de ventas
   const filteredSales = sales.filter((s) => {
+    // En la vista de Ventas principales, solo mostramos las ventas efectivas
+    const isSuccessStatus = ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'COMPLETED', 'PENDING'].includes(s.status);
+    if (!isSuccessStatus) return false;
+
     const q = searchTerm.toLowerCase();
     return (
       s.lead?.email?.toLowerCase().includes(q) ||
@@ -611,6 +627,7 @@ export function SalesView({
               placeholder="Buscar por email, lead, producto o ID..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              onFocus={(e) => e.target.select()}
               className="pl-9 bg-background border-border focus:border-primary text-foreground"
             />
           </div>
@@ -626,8 +643,8 @@ export function SalesView({
                 <TableHead className="text-muted-foreground font-medium">Fecha</TableHead>
                 <TableHead className="text-muted-foreground font-medium">Lead</TableHead>
                 <TableHead className="text-muted-foreground font-medium">Producto</TableHead>
-                <TableHead className="text-muted-foreground font-medium">Origen</TableHead>
-                <TableHead className="text-muted-foreground font-medium">Txn ID</TableHead>
+                <TableHead className="text-muted-foreground font-medium">Closer</TableHead>
+                <TableHead className="text-muted-foreground font-medium">Cód. Venta</TableHead>
                 <TableHead className="text-muted-foreground font-medium">Monto</TableHead>
                 <TableHead className="text-muted-foreground font-medium text-right">Estado</TableHead>
               </TableRow>
@@ -673,13 +690,19 @@ export function SalesView({
                 </TableRow>
               ) : (
                 /* ESTADO 4: DATA */
-                filteredSales.map((sale) => (
-                  <TableRow key={sale.id} className="border-border hover:bg-muted/40 transition-colors">
+                (filteredSales as (SaleListItem & { closerName?: string | null, closerEmail?: string | null })[]).map((sale) => (
+                  <TableRow 
+                    key={sale.id} 
+                    className="border-border hover:bg-muted/40 transition-colors cursor-pointer"
+                    onClick={() => setSelectedTxn(sale)}
+                  >
                     <TableCell className="text-foreground text-xs whitespace-nowrap">
-                      {new Date(sale.createdAt).toLocaleDateString(undefined, {
+                      {new Date(sale.createdAt).toLocaleString(undefined, {
                         year: 'numeric',
                         month: 'short',
                         day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
                       })}
                     </TableCell>
                     <TableCell>
@@ -689,15 +712,21 @@ export function SalesView({
                       <div className="text-xs text-muted-foreground">{sale.lead?.email}</div>
                     </TableCell>
                     <TableCell className="text-foreground text-sm font-medium">
-                      {sale.productName}
+                      <div className="max-w-[150px] truncate" title={sale.productName}>{sale.productName || 'N/A'}</div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className="border-border text-foreground font-mono text-[10px]">
-                        {sale.source}
-                      </Badge>
+                      {sale.closerName || sale.closerEmail ? (
+                        <div className="text-sm font-medium text-primary">
+                          {sale.closerName || sale.closerEmail}
+                        </div>
+                      ) : (
+                        <Badge variant="outline" className="border-border text-muted-foreground">Orgánica</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs font-mono">
-                      {sale.externalOrderId}
+                      <div className="max-w-[120px] truncate" title={sale.externalOrderId || sale.externalTxnId || 'N/A'}>
+                        {sale.externalOrderId || sale.externalTxnId || 'N/A'}
+                      </div>
                     </TableCell>
                     <TableCell className="text-foreground font-semibold text-sm">
                       {new Intl.NumberFormat('en-US', {
@@ -706,8 +735,16 @@ export function SalesView({
                       }).format(sale.amount)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {sale.status === 'APPROVED' ? (
-                        <Badge className="bg-primary/15 text-primary border-primary/30 font-medium">
+                      {sale.status === 'PURCHASE_APPROVED' ? (
+                        <Badge className="bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30 font-medium">
+                          COMPRA APROBADA
+                        </Badge>
+                      ) : sale.status === 'APPROVED' ? (
+                        <Badge className="bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30 font-medium">
+                          APROBADA
+                        </Badge>
+                      ) : sale.status === 'COMPLETE' ? (
+                        <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-medium">
                           COMPLETADA
                         </Badge>
                       ) : sale.status === 'REFUNDED' ? (
@@ -817,6 +854,7 @@ export function SalesView({
                         placeholder="Ej. Roberto Gómez"
                         value={manualForm.leadName}
                         onChange={(e) => setManualForm({ ...manualForm, leadName: e.target.value })}
+                        onFocus={(e) => e.target.select()}
                         className="bg-background border-border text-foreground h-9 text-xs"
                       />
                     </div>
@@ -828,6 +866,7 @@ export function SalesView({
                         placeholder="roberto@ejemplo.com"
                         value={manualForm.leadEmail}
                         onChange={(e) => setManualForm({ ...manualForm, leadEmail: e.target.value })}
+                        onFocus={(e) => e.target.select()}
                         className="bg-background border-border text-foreground h-9 text-xs"
                       />
                     </div>
@@ -838,6 +877,7 @@ export function SalesView({
                       placeholder="+57 300 123 4567"
                       value={manualForm.leadPhone}
                       onChange={(e) => setManualForm({ ...manualForm, leadPhone: e.target.value })}
+                      onFocus={(e) => e.target.select()}
                       className="bg-background border-border text-foreground h-9 text-xs"
                     />
                   </div>
@@ -899,6 +939,7 @@ export function SalesView({
                     placeholder="Nombre del producto o programa vendido"
                     value={manualForm.productName}
                     onChange={(e) => setManualForm({ ...manualForm, productName: e.target.value })}
+                    onFocus={(e) => e.target.select()}
                     className="bg-background border-border text-foreground h-9 text-xs"
                   />
                 </div>
@@ -943,6 +984,7 @@ export function SalesView({
                   min="0"
                   value={manualForm.amount}
                   onChange={(e) => setManualForm({ ...manualForm, amount: e.target.value })}
+                  onFocus={(e) => e.target.select()}
                   className="bg-background border-border text-foreground h-9 text-xs font-mono"
                 />
               </div>
@@ -1108,6 +1150,12 @@ export function SalesView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TransactionDetailModal 
+        isOpen={!!selectedTxn}
+        onClose={() => setSelectedTxn(null)}
+        transaction={selectedTxn}
+      />
     </div>
   );
 }

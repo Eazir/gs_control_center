@@ -20,6 +20,7 @@ export const ProductItemSchema = z.object({
   name: z.string().min(1, 'El nombre del producto es obligatorio'),
   offerCode: z.string().optional().nullable(),
   sku: z.string().optional().nullable(),
+  sck: z.string().optional().nullable(),
   price: z.number().min(0, 'El precio no puede ser negativo'),
   installments: z
     .number()
@@ -41,6 +42,7 @@ export const CreateProductInputSchema = z.object({
   name: z.string().min(1, 'El nombre del producto es obligatorio'),
   offerCode: z.string().optional().nullable(),
   sku: z.string().optional().nullable(),
+  sck: z.string().optional().nullable(),
   price: z.number().min(0, 'El precio no puede ser negativo'),
   installments: z
     .number()
@@ -62,6 +64,7 @@ export const UpdateProductInputSchema = z.object({
   name: z.string().min(1).optional(),
   offerCode: z.string().optional().nullable(),
   sku: z.string().optional().nullable(),
+  sck: z.string().optional().nullable(),
   price: z.number().min(0).optional(),
   installments: z
     .number()

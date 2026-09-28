@@ -1,4 +1,11 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  forwardRef,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import {
   CreateProductInput,
   CreateProductInputSchema,
@@ -10,6 +17,7 @@ import {
   IProjectRepository,
   PROJECT_REPOSITORY,
 } from '../../domain/ports/project-repository.port';
+import { SalesService } from '../../../sales';
 
 @Injectable()
 export class AddProductUseCase {
@@ -31,6 +39,7 @@ export class AddProductUseCase {
       name: validated.name.trim(),
       offerCode: validated.offerCode?.trim() || null,
       sku: validated.sku?.trim() || null,
+      sck: validated.sck?.trim() || null,
       price: Number(validated.price),
       installments: validated.installments ?? 1,
       currency: validated.currency.toUpperCase(),
@@ -79,6 +88,7 @@ export class UpdateProductUseCase {
     if (validated.name !== undefined) updatedData.name = validated.name.trim();
     if (validated.offerCode !== undefined) updatedData.offerCode = validated.offerCode?.trim() || null;
     if (validated.sku !== undefined) updatedData.sku = validated.sku?.trim() || null;
+    if (validated.sck !== undefined) updatedData.sck = validated.sck?.trim() || null;
     if (validated.price !== undefined) updatedData.price = Number(validated.price);
     if (validated.installments !== undefined) updatedData.installments = validated.installments;
     if (validated.currency !== undefined) updatedData.currency = validated.currency.toUpperCase();
@@ -100,7 +110,10 @@ export class UpdateProductUseCase {
 export class RemoveProductUseCase {
   constructor(
     @Inject(PROJECT_REPOSITORY)
-    private readonly projectRepository: IProjectRepository
+    private readonly projectRepository: IProjectRepository,
+    @Optional()
+    @Inject(forwardRef(() => SalesService))
+    private readonly salesService?: SalesService
   ) {}
 
   async execute(projectId: string, productId: string): Promise<void> {
@@ -114,6 +127,20 @@ export class RemoveProductUseCase {
       throw new NotFoundException(
         `Producto con id '${productId}' no encontrado en el catálogo del proyecto.`
       );
+    }
+
+    // Validación preventiva: no permitir eliminar si tiene transacciones históricas
+    if (this.salesService) {
+      const salesCount = await this.salesService.countSalesForProduct(
+        projectId,
+        productId,
+        existingProduct.offerCode
+      );
+      if (salesCount > 0) {
+        throw new BadRequestException(
+          `No es posible eliminar '${existingProduct.name}' porque tiene ${salesCount} transacción(es) histórica(s) asociada(s). Te sugerimos desactivarlo para que deje de admitir ventas sin alterar el historial contable ni los reportes.`
+        );
+      }
     }
 
     project.removeProduct(productId);

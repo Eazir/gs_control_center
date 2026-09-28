@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Request, BadRequestException, Inject } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards, Request, BadRequestException, Inject, ForbiddenException } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { JwtAuthGuard } from '../auth';
 import { ManualSaleSchema } from '@gs/contracts';
@@ -12,11 +12,59 @@ export class SalesController {
   ) {}
 
   @Get('project/:projectId')
-  async listProjectSales(@Param('projectId') projectId: string) {
+  async listProjectSales(
+    @Param('projectId') projectId: string,
+    @Request() req: { user: { id: string; role: string } }
+  ) {
     if (!this.salesService) {
       return [];
     }
-    return this.salesService.listSales(projectId);
+    return this.salesService.listSales(projectId, req.user);
+  }
+
+  @Get('project/:projectId/transactions')
+  async listProjectTransactions(
+    @Param('projectId') projectId: string,
+    @Request() req: { user: { id: string; role: string } }
+  ) {
+    if (req.user.role === 'CLOSER') {
+      throw new ForbiddenException('Los closers no tienen acceso al historial de transacciones global.');
+    }
+    if (!this.salesService) {
+      return [];
+    }
+    return this.salesService.listTransactions(projectId);
+  }
+
+  @Get('project/:projectId/leads')
+  async listProjectLeads(
+    @Param('projectId') projectId: string,
+    @Request() req: { user: { id: string; role: string } }
+  ) {
+    if (!this.salesService) return [];
+    return this.salesService.listLeads(projectId, req.user);
+  }
+
+  @Post('project/:projectId/leads/:leadId/stage')
+  async updateLeadStage(
+    @Param('projectId') projectId: string,
+    @Param('leadId') leadId: string,
+    @Body('stageId') stageId: string,
+    @Request() req: { user: { id: string; role: string } }
+  ) {
+    if (!stageId) {
+      throw new BadRequestException('El stageId es obligatorio');
+    }
+    return this.salesService.updateLeadStage(projectId, leadId, stageId, req.user);
+  }
+
+  @Get('project/:projectId/products/:productId/sales-count')
+  async getProductSalesCount(
+    @Param('projectId') projectId: string,
+    @Param('productId') productId: string
+  ) {
+    const count = await this.salesService.countSalesForProduct(projectId, productId);
+    return { count, hasSales: count > 0 };
   }
 
   @Post('project/:projectId/manual')
@@ -43,7 +91,11 @@ export class SalesController {
       throw new BadRequestException('El payload debe ser un array de ventas');
     }
 
-    const results = { successful: 0, failed: 0, errors: [] as any[] };
+    const results = {
+      successful: 0,
+      failed: 0,
+      errors: [] as Array<{ item: unknown; error: unknown }>,
+    };
     
     for (const item of payload) {
       const parsed = ManualSaleSchema.safeParse(item);
@@ -51,9 +103,12 @@ export class SalesController {
         try {
           await this.salesService.registerManualSale(projectId, parsed.data, req.user.id);
           results.successful++;
-        } catch (e: any) {
+        } catch (e: unknown) {
           results.failed++;
-          results.errors.push({ item, error: e.message });
+          results.errors.push({
+            item,
+            error: e instanceof Error ? e.message : 'Error desconocido',
+          });
         }
       } else {
         results.failed++;

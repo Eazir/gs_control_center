@@ -40,7 +40,7 @@ async function bootstrap() {
 
   const port = role === 'ingest' ? Number(process.env.INGEST_PORT || 3002) : Number(process.env.PORT || 3001);
   await app.listen(port);
-  console.info(`[${role.toUpperCase()}] Servicio iniciado en el puerto ${port}`);
+  console.info(`[${role.toUpperCase()}] Servicio iniciado en el puerto ${port} (v1.0.2)`);
 }
 
 bootstrap().catch((err: unknown) => {

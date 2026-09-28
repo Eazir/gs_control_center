@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { AuthModule } from '../auth';
+import { SalesModule } from '../sales';
 import { ProjectsController } from './api/projects.controller';
 import { PROJECT_REPOSITORY } from './domain/ports/project-repository.port';
 import { PrismaProjectRepository } from './infrastructure/prisma-project.repository';
@@ -21,7 +22,7 @@ import {
 } from './application/use-cases/manage-members.use-case';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, forwardRef(() => SalesModule)],
   controllers: [ProjectsController],
   providers: [
     {

@@ -54,8 +54,8 @@ import { fetchWithAuth } from '@/lib/api-client';
 interface ProductItem {
   id: string;
   name: string;
-  sku?: string | null;
   offerCode?: string | null;
+  sck?: string | null;
   price: number;
   installments?: number;
   currency: string;
@@ -179,7 +179,6 @@ export default function AdminProjectsPage() {
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
   const [newProdName, setNewProdName] = useState<string>('');
-  const [newProdSku, setNewProdSku] = useState<string>('');
   const [newProdOfferCode, setNewProdOfferCode] = useState<string>('');
   const [newProdPrice, setNewProdPrice] = useState<number>(997);
   const [newProdInstallments, setNewProdInstallments] = useState<number>(1);
@@ -392,7 +391,6 @@ export default function AdminProjectsPage() {
   const openCatalogModal = async (project: ProjectSummary) => {
     setCatalogProject(project);
     setNewProdName('');
-    setNewProdSku('');
     setNewProdOfferCode('');
     setNewProdPrice(997);
     setNewProdInstallments(1);
@@ -455,7 +453,6 @@ export default function AdminProjectsPage() {
     try {
       const payload = {
         name: newProdName.trim(),
-        sku: newProdSku.trim() || null,
         offerCode: newProdOfferCode.trim() || null,
         price: Number(newProdPrice),
         installments: newProdInstallments,
@@ -481,7 +478,6 @@ export default function AdminProjectsPage() {
 
       // Resetear campos del formulario
       setNewProdName('');
-      setNewProdSku('');
       setNewProdOfferCode('');
       setNewProdPrice(997);
       setNewProdInstallments(1);
@@ -510,7 +506,9 @@ export default function AdminProjectsPage() {
       );
 
       if (!res.ok) {
-        throw new Error('No se pudo eliminar el producto');
+        const errorData = await res.json().catch(() => null);
+        const errorMsg = errorData?.message || 'No se pudo eliminar el producto';
+        throw new Error(Array.isArray(errorMsg) ? errorMsg.join(', ') : errorMsg);
       }
 
       setCatalogProducts((prev) => prev.filter((p) => p.id !== productId));
@@ -518,6 +516,7 @@ export default function AdminProjectsPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error al eliminar producto';
       setCatalogError(msg);
+      alert(msg);
     }
   };
 
@@ -825,6 +824,7 @@ export default function AdminProjectsPage() {
               placeholder="Buscar por nombre, slug o director..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={(e) => e.target.select()}
               className="pl-9 bg-[#0B0D13] border-border text-xs h-9 text-foreground placeholder:text-muted-foreground"
             />
           </div>
@@ -1118,6 +1118,7 @@ export default function AdminProjectsPage() {
                     id="proj-name"
                     value={formName}
                     onChange={handleNameChange}
+                    onFocus={(e) => e.target.select()}
                     placeholder="Ej. Master Closer Academy"
                     className="bg-[#0B0D13] border-border text-xs h-9"
                     required
@@ -1132,6 +1133,7 @@ export default function AdminProjectsPage() {
                     id="proj-slug"
                     value={formSlug}
                     onChange={handleSlugChange}
+                    onFocus={(e) => e.target.select()}
                     placeholder="master-closer-academy"
                     className="bg-[#0B0D13] border-border text-xs h-9 font-mono"
                     required
@@ -1147,6 +1149,7 @@ export default function AdminProjectsPage() {
                   id="proj-desc"
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
+                  onFocus={(e) => e.target.select()}
                   placeholder="Detalles sobre el infoproducto, público objetivo o formato de venta"
                   className="bg-[#0B0D13] border-border text-xs h-9"
                 />
@@ -1380,6 +1383,7 @@ export default function AdminProjectsPage() {
                         id="prod-name"
                         value={newProdName}
                         onChange={(e) => setNewProdName(e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         placeholder="Ej. Entrada General VIP"
                         className="bg-[#0E1118] border-border text-xs h-8"
                         required
@@ -1394,13 +1398,14 @@ export default function AdminProjectsPage() {
                         id="prod-offerCode"
                         value={newProdOfferCode}
                         onChange={(e) => setNewProdOfferCode(e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         placeholder="Ej. OFF-123"
                         className="bg-[#0E1118] border-border text-xs h-8 font-mono"
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                     <div className="space-y-1">
                       <Label htmlFor="prod-price" className="text-[11px] text-muted-foreground font-medium">
                         Precio <span className="text-primary">*</span>
@@ -1412,6 +1417,7 @@ export default function AdminProjectsPage() {
                         step="1"
                         value={newProdPrice}
                         onChange={(e) => setNewProdPrice(Number(e.target.value))}
+                        onFocus={(e) => e.target.select()}
                         className="bg-[#0E1118] border-border text-xs h-8 font-mono"
                         required
                       />
@@ -1428,21 +1434,9 @@ export default function AdminProjectsPage() {
                         step="1"
                         value={newProdInstallments}
                         onChange={(e) => setNewProdInstallments(Math.max(1, Number(e.target.value)))}
+                        onFocus={(e) => e.target.select()}
                         className="bg-[#0E1118] border-border text-xs h-8 font-mono"
                         required
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label htmlFor="prod-sku" className="text-[11px] text-muted-foreground font-medium">
-                        SKU / Código (Opcional)
-                      </Label>
-                      <Input
-                        id="prod-sku"
-                        value={newProdSku}
-                        onChange={(e) => setNewProdSku(e.target.value)}
-                        placeholder="TKT-VIP-2026"
-                        className="bg-[#0E1118] border-border text-xs h-8 font-mono"
                       />
                     </div>
                   </div>
@@ -1470,6 +1464,7 @@ export default function AdminProjectsPage() {
                         placeholder="Ej. Productor Secundario"
                         value={newProdExternalLabel}
                         onChange={(e) => setNewProdExternalLabel(e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         className="bg-[#0E1118] border-border text-xs h-8"
                       />
                     </div>

@@ -6,7 +6,7 @@ import { CaslModule } from './core/casl';
 import { AuthModule } from './modules/auth';
 import { ProjectsModule } from './modules/projects';
 import { SalesModule } from './modules/sales';
-import { IntegrationsModule } from './modules/integrations/integrations.module';
+import { IntegrationsModule } from './modules/integrations';
 
 @Module({
   imports: [

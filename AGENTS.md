@@ -45,7 +45,7 @@ packages/config    → ESLint, Prettier, tsconfig base
   - `api`: GraphQL + REST, puerto 3001
   - `ingest`: solo webhooks REST, puerto 3002
   - `worker`: BullMQ, sin HTTP expuesto
-- **TypeScript `strict: true`**. `any` prohibido; usa `unknown`.
+- **TypeScript `strict: true`**. `any` está **estrictamente prohibido** (incluso en `whereClause` de Prisma u objetos dinámicos); usa `unknown` o importa el tipo de Prisma correspondiente (ej: `Prisma.LeadWhereInput`). Un `any` rompe el build.
 - Capas: resolver → servicio de aplicación → dominio → adaptador. Resolvers sin lógica de negocio ni Prisma.
 - **DataLoader obligatorio** en toda relación GraphQL. Un resolver N+1 es un bug.
 - Escrituras multi-tabla → `prisma.$transaction`.
