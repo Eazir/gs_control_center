@@ -1,263 +1,317 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { UploadCloud, CheckCircle2, AlertCircle, ArrowRight } from 'lucide-react';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-
-interface MappingField {
-  key: string;
-  label: string;
-  required: boolean;
-}
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { UploadCloud, CheckCircle2, ArrowRight, Table as TableIcon } from 'lucide-react';
+import { fetchWithAuth } from '@/lib/api-client';
 
 interface CsvImporterProps {
+  projectId?: string;
   mode: 'leads' | 'sales';
-  onImport: (mappedData: any[]) => Promise<void>;
   onClose: () => void;
+  onImport?: (data: any[]) => Promise<void>; // Para retrocompatibilidad
 }
 
-export function CsvImporter({ mode, onImport, onClose }: CsvImporterProps) {
-  const [file, setFile] = useState<File | null>(null);
-  const [csvData, setCsvData] = useState<any[]>([]);
-  const [headers, setHeaders] = useState<string[]>([]);
-  const [mapping, setMapping] = useState<Record<string, string>>({});
+const LEADS_FIELDS = [
+  { key: 'phone', label: 'Teléfono (Requerido)', required: true },
+  { key: 'name', label: 'Nombres', required: false },
+  { key: 'email', label: 'Correo', required: false },
+  { key: 'closerId', label: 'Closer (Opcional, nombre/email)', required: false },
+];
+
+const SALES_FIELDS = [
+  { key: 'externalTxnId', label: 'Código de Transacción (Requerido)', required: true },
+  { key: 'status', label: 'Estado de transacción (Requerido)', required: true },
+  { key: 'productName', label: 'Nombre del Producto', required: false },
+  { key: 'amount', label: 'Monto', required: false },
+  { key: 'currency', label: 'Moneda (USD, COP...)', required: false },
+  { key: 'date', label: 'Fecha (YYYY-MM-DD o ISO)', required: false },
+  { key: 'leadName', label: 'Nombres del Comprador', required: false },
+  { key: 'leadEmail', label: 'Correo del Comprador', required: false },
+  { key: 'leadPhone', label: 'Teléfono del Comprador', required: false },
+  { key: 'offerCode', label: 'Código de Oferta', required: false },
+  { key: 'sck', label: 'Código SCK (Closer)', required: false },
+  { key: 'paymentMethod', label: 'Tipo de pago', required: false },
+  { key: 'installments', label: 'Cuotas', required: false },
+];
+
+export function CsvImporter({ projectId, mode, onClose, onImport }: CsvImporterProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [csvData, setCsvData] = useState<any[]>([]);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [assignmentMode, setAssignmentMode] = useState<'none' | 'specific' | 'equitable'>('none');
+  const [selectedClosers, setSelectedClosers] = useState<string[]>([]);
+  const [projectClosers, setProjectClosers] = useState<{ id: string; userId: string; userName: string | null; userEmail: string | null; roleInProject: string }[]>([]);
+  
   const [isImporting, setIsImporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<{ successful: number; failed: number } | null>(null);
 
-  const leadFields: MappingField[] = [
-    { key: 'email', label: 'Email', required: true },
-    { key: 'name', label: 'Nombre', required: false },
-    { key: 'phone', label: 'Teléfono', required: false },
-    { key: 'productOfInterest', label: 'Producto de Interés', required: false },
-  ];
+  const fields = mode === 'leads' ? LEADS_FIELDS : SALES_FIELDS;
 
-  const saleFields: MappingField[] = [
-    { key: 'externalTxnId', label: 'Código Transacción', required: true },
-    { key: 'leadEmail', label: 'Email Comprador', required: true },
-    { key: 'leadName', label: 'Nombre Comprador', required: false },
-    { key: 'productName', label: 'Producto', required: true },
-    { key: 'amount', label: 'Monto', required: true },
-    { key: 'currency', label: 'Moneda (USD/MXN...)', required: false },
-    { key: 'date', label: 'Fecha', required: false },
-  ];
-
-  const targetFields = mode === 'leads' ? leadFields : saleFields;
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = event.target.files?.[0];
-    if (!selectedFile) return;
-
-    if (!selectedFile.name.endsWith('.csv')) {
-      setError('Por favor selecciona un archivo .csv');
-      return;
+  useEffect(() => {
+    if (projectId && mode === 'leads') {
+      // Load closers
+      fetchWithAuth(`/projects/${projectId}/members`)
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            const closers = data.filter((m: any) => m.roleInProject === 'CLOSER');
+            setProjectClosers(closers);
+          }
+        })
+        .catch(console.error);
     }
+  }, [projectId, mode]);
 
-    setFile(selectedFile);
-    setError(null);
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    Papa.parse(selectedFile, {
+    Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
-        if (results.meta.fields) {
-          setHeaders(results.meta.fields);
-          setCsvData(results.data);
-          
-          // Auto-mapping intuitivo
-          const initialMapping: Record<string, string> = {};
-          targetFields.forEach((field) => {
-            const match = results.meta.fields?.find(
-              (h) => h.toLowerCase().includes(field.key.toLowerCase()) || 
-                     h.toLowerCase().includes(field.label.toLowerCase())
-            );
-            if (match) {
-              initialMapping[field.key] = match;
-            }
-          });
-          setMapping(initialMapping);
-          setStep(2);
-        } else {
-          setError('No se encontraron cabeceras en el archivo CSV.');
-        }
-      },
-      error: (err) => {
-        setError(`Error parseando CSV: ${err.message}`);
+        setCsvHeaders(results.meta.fields || []);
+        setCsvData(results.data);
+        setMapping({});
+        setStep(2);
       }
     });
   };
 
-  const handleMappingChange = (targetKey: string, sourceHeader: string) => {
-    setMapping((prev) => ({
-      ...prev,
-      [targetKey]: sourceHeader
-    }));
-  };
-
-  const proceedToReview = () => {
-    // Validar requeridos
-    const missing = targetFields.filter(f => f.required && !mapping[f.key]);
-    if (missing.length > 0) {
-      setError(`Faltan mapear campos obligatorios: ${missing.map(m => m.label).join(', ')}`);
-      return;
-    }
-    setError(null);
-    setStep(3);
-  };
-
-  const handleImport = async () => {
-    try {
-      setIsImporting(true);
-      setError(null);
-      
-      const mappedData = csvData.map(row => {
-        const obj: any = {};
-        for (const [targetKey, sourceHeader] of Object.entries(mapping)) {
-          if (sourceHeader && row[sourceHeader] !== undefined) {
-            // Conversión de tipos básica si es número
-            if (targetKey === 'amount') {
-              obj[targetKey] = parseFloat(row[sourceHeader]) || 0;
-            } else {
-              obj[targetKey] = row[sourceHeader];
-            }
-          }
+  const handleExecuteImport = async () => {
+    setIsImporting(true);
+    
+    // Transform data
+    const payload = csvData.map((row, index) => {
+      const obj: any = {};
+      fields.forEach(f => {
+        const mappedCol = mapping[f.key];
+        if (mappedCol && mappedCol !== 'none' && row[mappedCol]) {
+          let val = row[mappedCol];
+          if (f.key === 'installments') val = parseInt(val, 10) || 1;
+          if (f.key === 'amount') val = parseFloat(val) || 0;
+          obj[f.key] = val;
         }
-        return obj;
       });
 
-      await onImport(mappedData);
-      onClose();
-    } catch (err: any) {
-      setError(err.message || 'Error durante la importación');
+      // Assignment logic for leads
+      // Closer assignment logic for leads
+      if (mode === 'leads' && assignmentMode !== 'none') {
+        if (assignmentMode === 'specific' && selectedClosers.length > 0) {
+          obj.closerId = selectedClosers[0];
+        } else if (assignmentMode === 'equitable' && selectedClosers.length > 0) {
+          obj.closerId = selectedClosers[index % selectedClosers.length];
+        }
+      }
+
+      return obj;
+    });
+
+    if (onImport) {
+      try {
+        await onImport(payload);
+        setStep(3);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsImporting(false);
+      }
+      return;
+    }
+
+    if (!projectId) {
+      alert("No projectId provided");
+      setIsImporting(false);
+      return;
+    }
+
+    const endpoint = mode === 'leads' 
+      ? `/sales/project/${projectId}/leads/import-csv` 
+      : `/sales/project/${projectId}/import-csv`;
+
+    try {
+      let successful = 0;
+      let failed = 0;
+      const CHUNK_SIZE = 50;
+      
+      for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+        const chunk = payload.slice(i, i + CHUNK_SIZE);
+        const res = await fetchWithAuth(endpoint, {
+          method: 'POST',
+          body: JSON.stringify(chunk)
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          successful += (data.successful || 0);
+          failed += (data.failed || 0);
+        } else {
+          failed += chunk.length;
+        }
+        
+        // Pequeña pausa para no saturar (100ms)
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      setImportResult({ successful, failed });
+      setStep(3);
+    } catch (err) {
+      console.error(err);
+      alert('Error al importar. Revisa la consola.');
     } finally {
       setIsImporting(false);
     }
   };
 
+  const reset = () => {
+    setStep(1);
+    setCsvData([]);
+    setCsvHeaders([]);
+    setMapping({});
+    setImportResult(null);
+    setAssignmentMode('none');
+    setSelectedClosers([]);
+  };
+
   return (
-    <Card className="w-full shadow-md">
-      <CardHeader>
-        <CardTitle>Importar {mode === 'leads' ? 'Leads' : 'Ventas'}</CardTitle>
-        <CardDescription>
-          Sube tu archivo .csv y mapea las columnas.
-        </CardDescription>
-      </CardHeader>
-      
-      <CardContent>
-        {error && (
-          <Alert variant="destructive" className="mb-4">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+    <div className="w-full p-6">
+      {step === 1 && (
+        <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-border/60 rounded-xl bg-muted/20">
+          <UploadCloud className="w-12 h-12 text-muted-foreground mb-4" />
+          <h3 className="text-lg font-medium text-foreground mb-2">Sube tu archivo CSV</h3>
+          <p className="text-sm text-muted-foreground mb-6 text-center max-w-sm">
+            Asegúrate de que tu archivo esté separado por comas y tenga encabezados en la primera fila.
+          </p>
+          <Button asChild>
+            <label className="cursor-pointer">
+              Seleccionar Archivo
+              <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+            </label>
+          </Button>
+        </div>
+      )}
 
-        {step === 1 && (
-          <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-border rounded-xl bg-card/50">
-            <UploadCloud className="h-10 w-10 text-muted-foreground mb-4" />
-            <p className="text-sm font-medium mb-4">Selecciona o arrastra tu archivo .csv</p>
-            <input 
-              type="file" 
-              accept=".csv" 
-              onChange={handleFileUpload} 
-              className="block w-full max-w-sm text-sm text-muted-foreground
-                file:mr-4 file:py-2 file:px-4
-                file:rounded-full file:border-0
-                file:text-sm file:font-semibold
-                file:bg-primary/10 file:text-primary
-                hover:file:bg-primary/20
-                cursor-pointer"
-            />
+      {step === 2 && (
+        <div className="space-y-6">
+          <div className="bg-muted/30 p-4 rounded-lg flex justify-between items-center border border-border">
+            <div className="flex items-center gap-2 text-sm text-foreground">
+              <TableIcon size={18} className="text-primary" />
+              <span><strong>{csvData.length}</strong> filas detectadas</span>
+            </div>
           </div>
-        )}
 
-        {step === 2 && (
-          <div className="space-y-6">
-            <div className="bg-muted/30 rounded-xl p-4 border border-border">
-              <h3 className="text-sm font-semibold mb-4">Mapeo de Columnas</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {targetFields.map((field) => (
-                  <div key={field.key} className="flex flex-col gap-1.5">
-                    <label className="text-xs font-medium text-muted-foreground">
-                      {field.label} {field.required && <span className="text-destructive">*</span>}
-                    </label>
-                    <select
-                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                      value={mapping[field.key] || ''}
-                      onChange={(e) => handleMappingChange(field.key, e.target.value)}
-                    >
-                      <option value="">-- Ignorar --</option>
-                      {headers.map((h) => (
-                        <option key={h} value={h}>{h}</option>
-                      ))}
-                    </select>
+          <div className="border border-border rounded-lg overflow-hidden bg-background">
+            <div className="grid grid-cols-[1fr_1fr] bg-muted/50 p-3 border-b border-border items-center">
+              <h4 className="font-semibold text-sm text-foreground">Campo del Sistema</h4>
+              <h4 className="font-semibold text-sm text-foreground">Tu Columna CSV</h4>
+            </div>
+            <div className="divide-y divide-border max-h-[45vh] overflow-y-auto">
+              {fields.map(f => (
+                <div key={f.key} className="grid grid-cols-[1fr_1fr] p-3 gap-4 items-center hover:bg-muted/10 transition-colors">
+                  <div className="text-sm text-foreground">
+                    {f.label} {f.required && <span className="text-red-500 font-bold">*</span>}
                   </div>
-                ))}
+                  <div>
+                    <Select 
+                      {...(mapping[f.key] ? { value: mapping[f.key] } : {})} 
+                      onValueChange={(val) => setMapping(prev => ({...prev, [f.key]: val}))}
+                    >
+                      <SelectTrigger className="w-full bg-background border-border">
+                        <SelectValue placeholder="Ignorar campo..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">-- Ignorar --</SelectItem>
+                        {csvHeaders.map(h => (
+                          <SelectItem key={h} value={h}>{h}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {mode === 'leads' && (
+            <div className="pt-4 border-t border-border">
+              <h4 className="font-semibold text-sm mb-3">Distribución de Closers</h4>
+              <div className="flex flex-col gap-3">
+                <Select value={assignmentMode} onValueChange={(v: any) => setAssignmentMode(v)}>
+                  <SelectTrigger className="w-full bg-background">
+                    <SelectValue placeholder="Opciones de asignación" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Dejar sin asignar / Usar columna del CSV</SelectItem>
+                    <SelectItem value="specific">Asignar todos a un Closer específico</SelectItem>
+                    <SelectItem value="equitable">Repartir equitativamente</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {(assignmentMode === 'specific' || assignmentMode === 'equitable') && (
+                  <div className="p-3 bg-muted/20 border border-border rounded-lg space-y-2 max-h-48 overflow-y-auto">
+                    <p className="text-xs text-muted-foreground mb-2">Selecciona los closers para la asignación:</p>
+                    {projectClosers.map(c => (
+                      <label key={c.userId} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input 
+                          type={assignmentMode === 'specific' ? 'radio' : 'checkbox'} 
+                          name="closer_select"
+                          checked={selectedClosers.includes(c.userId)}
+                          onChange={(e) => {
+                            if (assignmentMode === 'specific') {
+                              setSelectedClosers([c.userId]);
+                            } else {
+                              setSelectedClosers(prev => e.target.checked ? [...prev, c.userId] : prev.filter(id => id !== c.userId));
+                            }
+                          }}
+                        />
+                        {c.userName || c.userEmail || 'Sin nombre'}
+                      </label>
+                    ))}
+                    {projectClosers.length === 0 && <span className="text-xs text-red-500">No hay closers en el proyecto.</span>}
+                  </div>
+                )}
               </div>
             </div>
+          )}
 
-            <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setStep(1)}>Atrás</Button>
-              <Button onClick={proceedToReview} variant="gold">
-                Continuar a Revisión <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-            </div>
+          <div className="flex justify-between mt-6 pt-4 border-t border-border">
+            <Button variant="outline" onClick={() => setStep(1)}>Atrás</Button>
+            <Button 
+              onClick={handleExecuteImport} 
+              disabled={isImporting || fields.filter(f => f.required).some(f => !mapping[f.key] || mapping[f.key] === 'none')}
+            >
+              {isImporting ? 'Importando...' : 'Iniciar Importación'} <ArrowRight className="ml-2 w-4 h-4" />
+            </Button>
           </div>
-        )}
+        </div>
+      )}
 
-        {step === 3 && (
-          <div className="space-y-6">
-            <Alert className="bg-success/10 border-success/30 text-success">
-              <CheckCircle2 className="h-4 w-4 !text-success" />
-              <AlertTitle>Todo listo para importar</AlertTitle>
-              <AlertDescription>
-                Se han detectado {csvData.length} registros listos para ser procesados.
-              </AlertDescription>
-            </Alert>
-
-            <div className="border rounded-md overflow-x-auto max-h-[300px]">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {targetFields.filter(f => mapping[f.key]).map(f => (
-                      <TableHead key={f.key}>{f.label}</TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {csvData.slice(0, 5).map((row, i) => (
-                    <TableRow key={i}>
-                      {targetFields.filter(f => mapping[f.key]).map(f => (
-                        <TableCell key={f.key} className="text-xs">
-                          {row[mapping[f.key] as string]}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                  {csvData.length > 5 && (
-                    <TableRow>
-                      <TableCell colSpan={targetFields.filter(f => mapping[f.key]).length} className="text-center text-xs text-muted-foreground italic">
-                        ... y {csvData.length - 5} registros más
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+      {step === 3 && (
+        <div className="flex flex-col items-center justify-center p-8 space-y-4">
+          <CheckCircle2 className="w-16 h-16 text-emerald-500" />
+          <h3 className="text-2xl font-bold text-foreground">Importación Finalizada</h3>
+          {importResult && (
+            <div className="flex gap-4">
+              <div className="bg-emerald-500/10 text-emerald-600 px-4 py-2 rounded-lg font-medium">
+                {importResult.successful} importados
+              </div>
+              <div className="bg-red-500/10 text-red-600 px-4 py-2 rounded-lg font-medium">
+                {importResult.failed} fallidos
+              </div>
             </div>
-
-            <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setStep(2)} disabled={isImporting}>Atrás</Button>
-              <Button onClick={handleImport} disabled={isImporting} variant="gold">
-                {isImporting ? 'Importando...' : 'Iniciar Importación Masiva'}
-              </Button>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          )}
+          <p className="text-sm text-muted-foreground mt-4">
+            Los registros fallidos usualmente se deben a duplicados exactos o datos mal formateados.
+          </p>
+          <Button className="mt-6" onClick={() => { reset(); onClose(); }}>
+            Cerrar
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

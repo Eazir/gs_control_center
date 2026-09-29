@@ -27,6 +27,7 @@ import {
 import { AdminShell } from '@/components/layout/admin-shell';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -184,7 +185,7 @@ export default function AdminProjectsPage() {
   const [newProdInstallments, setNewProdInstallments] = useState<number>(1);
   const [newProdCurrency, setNewProdCurrency] = useState<string>('USD');
   const [newProdOwnerCloserId, setNewProdOwnerCloserId] = useState<string>('');
-  const [newProdExternalLabel, setNewProdExternalLabel] = useState<string>('');
+  const [newProdIsMarketing, setNewProdIsMarketing] = useState<boolean>(false);
   const [isAddingProduct, setIsAddingProduct] = useState<boolean>(false);
   const [productFormError, setProductFormError] = useState<string | null>(null);
 
@@ -396,7 +397,7 @@ export default function AdminProjectsPage() {
     setNewProdInstallments(1);
     setNewProdCurrency(project.goalsConfig?.currency || 'USD');
     setNewProdOwnerCloserId('');
-    setNewProdExternalLabel('');
+    setNewProdIsMarketing(false);
     setProductFormError(null);
     setCatalogError(null);
     setIsCatalogOpen(true);
@@ -459,7 +460,7 @@ export default function AdminProjectsPage() {
         currency: newProdCurrency,
         active: true,
         ownerCloserId: newProdOwnerCloserId || null,
-        externalLabel: newProdExternalLabel.trim() || null,
+        isMarketing: newProdIsMarketing,
       };
 
       const res = await fetchWithAuth(`/projects/${catalogProject.id}/products`, {
@@ -482,7 +483,7 @@ export default function AdminProjectsPage() {
       setNewProdPrice(997);
       setNewProdInstallments(1);
       setNewProdOwnerCloserId('');
-      setNewProdExternalLabel('');
+      setNewProdIsMarketing(false);
 
       // Refrescar lista de proyectos en segundo plano para actualizar productosCount
       loadProjects();
@@ -1459,14 +1460,17 @@ export default function AdminProjectsPage() {
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground font-medium">Label Externo (Opcional)</Label>
-                      <Input
-                        placeholder="Ej. Productor Secundario"
-                        value={newProdExternalLabel}
-                        onChange={(e) => setNewProdExternalLabel(e.target.value)}
-                        onFocus={(e) => e.target.select()}
-                        className="bg-[#0E1118] border-border text-xs h-8"
-                      />
+                      <Label className="text-[11px] text-muted-foreground font-medium">Marketing</Label>
+                      <div className="flex items-center h-8 space-x-2 bg-[#0E1118] px-3 rounded-md border border-border">
+                        <Checkbox 
+                          id="isMarketingGlobal" 
+                          checked={newProdIsMarketing} 
+                          onCheckedChange={(c: boolean | 'indeterminate') => setNewProdIsMarketing(!!c)}
+                        />
+                        <Label htmlFor="isMarketingGlobal" className="text-[11px] text-foreground">
+                          Es de Marketing
+                        </Label>
+                      </div>
                     </div>
                   </div>
                   

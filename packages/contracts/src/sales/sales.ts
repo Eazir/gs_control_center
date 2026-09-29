@@ -49,23 +49,29 @@ export type ManualSaleDto = z.infer<typeof ManualSaleSchema>;
 // Esquemas de importación CSV masiva
 export const CsvLeadImportSchema = z.object({
   name: z.string().optional(),
-  email: z.string().email('Email inválido para importación'),
-  phone: z.string().optional(),
-  closerId: z.string().uuid('UUID inválido').optional(),
+  email: z.string().email('Email inválido para importación').optional().nullable(),
+  phone: z.string().min(1, 'El teléfono es obligatorio'),
+  closerId: z.string().optional().nullable(), // Allow generic string (email, name, or id) to be resolved by backend
   productOfInterest: z.string().optional(),
 });
 
 export type CsvLeadImportDto = z.infer<typeof CsvLeadImportSchema>;
 
 export const CsvSaleImportSchema = z.object({
-  leadEmail: z.string().email('Email inválido para importación'),
+  date: z.string().optional(),
   leadName: z.string().optional(),
-  productName: z.string().min(1, 'El nombre del producto es requerido'),
-  amount: z.number().min(0, 'El monto debe ser positivo'),
-  currency: z.string().default('USD'),
-  date: z.string().datetime().optional(),
+  leadEmail: z.string().email('Email inválido para importación').optional().nullable(),
+  leadPhone: z.string().optional(),
+  offerCode: z.string().optional(),
+  status: z.string().min(1, 'El estado de la transacción es requerido'),
+  sck: z.string().optional().nullable(),
+  paymentMethod: z.string().optional(),
+  installments: z.coerce.number().default(1),
+  isFirstInstallment: z.boolean().default(true),
   externalTxnId: z.string().min(1, 'El código de transacción es requerido'),
-  closerId: z.string().uuid('UUID inválido').optional(),
+  productName: z.string().optional(),
+  amount: z.coerce.number().default(0),
+  currency: z.string().default('USD'),
 });
 
 export type CsvSaleImportDto = z.infer<typeof CsvSaleImportSchema>;
@@ -90,6 +96,8 @@ export interface SaleListItem {
   closerId?: string | null;
   closerName?: string | null;
   closerEmail?: string | null;
+  pipelineStage?: string | null;
+  pipelineSubstatus?: string | null;
   lead: {
     id?: string;
     name: string | null;
@@ -100,3 +108,20 @@ export interface SaleListItem {
   };
   metadata?: Record<string, unknown> | null;
 }
+
+export const UpdateLeadSchema = z.object({
+  name: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  email: z.string().email().optional(),
+  closerId: z.string().uuid().nullable().optional(),
+});
+
+export type UpdateLeadDto = z.infer<typeof UpdateLeadSchema>;
+
+export const UpdateTransactionStatusSchema = z.object({
+  status: z.string().optional(),
+  pipelineStage: z.string().optional(),
+  pipelineSubstatus: z.string().nullable().optional(),
+});
+
+export type UpdateTransactionStatusDto = z.infer<typeof UpdateTransactionStatusSchema>;

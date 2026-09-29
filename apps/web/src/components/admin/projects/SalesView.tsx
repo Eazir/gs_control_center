@@ -506,21 +506,7 @@ export function SalesView({
     }
   };
 
-  // Importación dinámica CSV (Desde el nuevo CsvImporter)
-  const handleImportCSVDynamic = async (mappedData: any[]) => {
-    try {
-      const res = await fetchWithAuth(`/sales/project/${projectId}/import-csv`, {
-        method: 'POST',
-        body: JSON.stringify(mappedData),
-      });
-      const resData = await res.json();
-      alert(`Importación completada. Exitosos: ${resData.successful}, Fallidos: ${resData.failed}`);
-      await loadSales();
-    } catch (err: any) {
-      alert(`Error importando el CSV: ${err.message || 'Desconocido'}`);
-      throw err;
-    }
-  };
+
 
   // Filtrado de ventas
   const filteredSales = sales.filter((s) => {
@@ -1084,9 +1070,12 @@ export function SalesView({
       <Dialog open={isImportModalOpen} onOpenChange={setIsImportModalOpen}>
         <DialogContent className="bg-background border-border text-foreground max-w-4xl">
           <CsvImporter 
+            projectId={projectId}
             mode="sales" 
-            onClose={() => setIsImportModalOpen(false)} 
-            onImport={handleImportCSVDynamic} 
+            onClose={() => {
+              setIsImportModalOpen(false);
+              loadSales();
+            }} 
           />
         </DialogContent>
       </Dialog>

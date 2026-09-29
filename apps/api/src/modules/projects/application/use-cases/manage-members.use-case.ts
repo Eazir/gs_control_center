@@ -50,6 +50,7 @@ export class ListProjectMembersUseCase {
         userId: record.userId,
         roleInProject: record.roleInProject,
         permissions: record.permissions,
+        sckCodes: record.sckCodes,
         assignedBy: record.assignedBy,
         assignedAt: record.assignedAt,
         userName: user?.fullName ?? null,
@@ -127,6 +128,7 @@ export class AssignProjectMemberUseCase {
       userId: input.userId,
       roleInProject: input.roleInProject,
       permissions: input.permissions ?? {},
+      sckCodes: input.sckCodes ?? [],
       assignedBy: assignedBy ?? null,
     });
 
@@ -140,6 +142,7 @@ export class AssignProjectMemberUseCase {
       userId: record.userId,
       roleInProject: record.roleInProject,
       permissions: record.permissions,
+      sckCodes: record.sckCodes,
       assignedBy: record.assignedBy,
       assignedAt: record.assignedAt,
       userName: user.fullName,
@@ -190,7 +193,8 @@ export class UpdateProjectMemberUseCase {
       projectId,
       userId,
       input.roleInProject,
-      input.permissions
+      input.permissions,
+      input.sckCodes
     );
 
     if (input.roleInProject === 'DIRECTOR' && existing.roleInProject !== 'DIRECTOR') {
@@ -207,6 +211,7 @@ export class UpdateProjectMemberUseCase {
       userId: record.userId,
       roleInProject: record.roleInProject,
       permissions: record.permissions,
+      sckCodes: record.sckCodes,
       assignedBy: record.assignedBy,
       assignedAt: record.assignedAt,
       userName: user?.fullName ?? null,

@@ -15,7 +15,14 @@ async function bootstrap() {
   const roleArg = args.find((arg) => arg.startsWith('--role='));
   const role = roleArg?.split('=')[1]?.trim() || 'api';
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    bodyParser: false,
+  });
+
+  // Aumentar límite del body para importaciones CSV masivas (default: 100KB)
+  const { json, urlencoded } = await import('express');
+  app.use(json({ limit: '5mb' }));
+  app.use(urlencoded({ extended: true, limit: '5mb' }));
 
   app.use(cookieParser());
 

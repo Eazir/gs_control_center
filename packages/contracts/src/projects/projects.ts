@@ -20,7 +20,7 @@ export const ProductItemSchema = z.object({
   name: z.string().min(1, 'El nombre del producto es obligatorio'),
   offerCode: z.string().optional().nullable(),
   sku: z.string().optional().nullable(),
-  sck: z.string().optional().nullable(),
+  isMarketing: z.boolean().default(false),
   price: z.number().min(0, 'El precio no puede ser negativo'),
   installments: z
     .number()
@@ -30,7 +30,6 @@ export const ProductItemSchema = z.object({
     .default(1),
   currency: z.string().default('USD'),
   ownerCloserId: z.string().uuid().optional().nullable(),
-  externalLabel: z.string().optional().nullable(),
   active: z.boolean().default(true),
 });
 export type ProductItem = z.infer<typeof ProductItemSchema>;
@@ -42,7 +41,7 @@ export const CreateProductInputSchema = z.object({
   name: z.string().min(1, 'El nombre del producto es obligatorio'),
   offerCode: z.string().optional().nullable(),
   sku: z.string().optional().nullable(),
-  sck: z.string().optional().nullable(),
+  isMarketing: z.boolean().default(false),
   price: z.number().min(0, 'El precio no puede ser negativo'),
   installments: z
     .number()
@@ -52,7 +51,6 @@ export const CreateProductInputSchema = z.object({
     .default(1),
   currency: z.string().min(1).default('USD'),
   ownerCloserId: z.string().uuid().optional().nullable(),
-  externalLabel: z.string().optional().nullable(),
   active: z.boolean().default(true).optional(),
 });
 export type CreateProductInput = z.input<typeof CreateProductInputSchema>;
@@ -64,7 +62,7 @@ export const UpdateProductInputSchema = z.object({
   name: z.string().min(1).optional(),
   offerCode: z.string().optional().nullable(),
   sku: z.string().optional().nullable(),
-  sck: z.string().optional().nullable(),
+  isMarketing: z.boolean().optional(),
   price: z.number().min(0).optional(),
   installments: z
     .number()
@@ -72,9 +70,8 @@ export const UpdateProductInputSchema = z.object({
     .min(1, 'El producto debe tener al menos 1 cuota')
     .max(360, 'El máximo de cuotas es 360')
     .optional(),
-  currency: z.string().optional(),
+  currency: z.string().min(1).optional(),
   ownerCloserId: z.string().uuid().optional().nullable(),
-  externalLabel: z.string().optional().nullable(),
   active: z.boolean().optional(),
 });
 export type UpdateProductInput = z.input<typeof UpdateProductInputSchema>;
@@ -309,6 +306,7 @@ export const ProjectMemberSchema = z.object({
   userId: z.string().uuid(),
   roleInProject: ProjectRoleSchema,
   permissions: z.record(z.unknown()).default({}),
+  sckCodes: z.array(z.string()).default([]),
   assignedBy: z.string().uuid().nullable().optional(),
   assignedAt: z.coerce.date(),
   userName: z.string().nullable().optional(),
@@ -325,6 +323,7 @@ export const AssignProjectMemberInputSchema = z.object({
   userId: z.string().uuid('ID de usuario inválido'),
   roleInProject: ProjectRoleSchema.default('CLOSER'),
   permissions: z.record(z.unknown()).optional(),
+  sckCodes: z.array(z.string()).optional(),
 });
 export type AssignProjectMemberInput = z.infer<typeof AssignProjectMemberInputSchema>;
 
@@ -334,6 +333,7 @@ export type AssignProjectMemberInput = z.infer<typeof AssignProjectMemberInputSc
 export const UpdateProjectMemberInputSchema = z.object({
   roleInProject: ProjectRoleSchema.optional(),
   permissions: z.record(z.unknown()).optional(),
+  sckCodes: z.array(z.string()).optional(),
 });
 export type UpdateProjectMemberInput = z.infer<typeof UpdateProjectMemberInputSchema>;
 

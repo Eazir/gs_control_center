@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, UseGuards, Request, BadRequestException, Inject, ForbiddenException } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { JwtAuthGuard } from '../auth';
-import { JwtPayload, ManualSaleSchema, CsvSaleImportSchema } from '@gs/contracts';
+import { JwtPayload, ManualSaleSchema, CsvSaleImportSchema, CsvLeadImportSchema, UpdateLeadDto, UpdateTransactionStatusDto } from '@gs/contracts';
 
 @Controller('sales')
 @UseGuards(JwtAuthGuard)
@@ -45,6 +45,44 @@ export class SalesController {
     return this.salesService.listLeads(projectId, { id: req.user.sub, role: req.user.role });
   }
 
+  @Post('project/:projectId/leads/import-csv')
+  async importLeadsCsv(
+    @Param('projectId') projectId: string,
+    @Body() payload: unknown[],
+    @Request() req: { user: JwtPayload }
+  ) {
+    if (!Array.isArray(payload)) {
+      throw new BadRequestException('El payload debe ser un array de leads');
+    }
+
+    const results = {
+      successful: 0,
+      failed: 0,
+      errors: [] as Array<{ item: unknown; error: unknown }>,
+    };
+    
+    for (const item of payload) {
+      const parsed = CsvLeadImportSchema.safeParse(item);
+      if (parsed.success) {
+        try {
+          await this.salesService.importLeadCsv(projectId, parsed.data, req.user.sub);
+          results.successful++;
+        } catch (e: unknown) {
+          results.failed++;
+          results.errors.push({
+            item,
+            error: e instanceof Error ? e.message : 'Error desconocido',
+          });
+        }
+      } else {
+        results.failed++;
+        results.errors.push({ item, error: parsed.error.errors });
+      }
+    }
+    
+    return results;
+  }
+
   @Post('project/:projectId/leads/:leadId/stage')
   async updateLeadStage(
     @Param('projectId') projectId: string,
@@ -56,6 +94,26 @@ export class SalesController {
       throw new BadRequestException('El stageId es obligatorio');
     }
     return this.salesService.updateLeadStage(projectId, leadId, stageId, { id: req.user.sub, role: req.user.role });
+  }
+
+  @Post('project/:projectId/leads/:leadId')
+  async updateLead(
+    @Param('projectId') projectId: string,
+    @Param('leadId') leadId: string,
+    @Body() data: UpdateLeadDto,
+    @Request() req: { user: JwtPayload }
+  ) {
+    return this.salesService.updateLead(projectId, leadId, data, { id: req.user.sub, role: req.user.role });
+  }
+
+  @Post('project/:projectId/transactions/:txnId')
+  async updateTransactionStatus(
+    @Param('projectId') projectId: string,
+    @Param('txnId') txnId: string,
+    @Body() data: UpdateTransactionStatusDto,
+    @Request() req: { user: JwtPayload }
+  ) {
+    return this.salesService.updateTransactionStatus(projectId, txnId, data, { id: req.user.sub, role: req.user.role });
   }
 
   @Get('project/:projectId/products/:productId/sales-count')
@@ -119,5 +177,7 @@ export class SalesController {
     
     return results;
   }
+
+  // Import leads movido arriba para evitar colisión con :leadId
 }
 

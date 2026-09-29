@@ -39,12 +39,11 @@ export class AddProductUseCase {
       name: validated.name.trim(),
       offerCode: validated.offerCode?.trim() || null,
       sku: validated.sku?.trim() || null,
-      sck: validated.sck?.trim() || null,
+      isMarketing: validated.isMarketing ?? false,
       price: Number(validated.price),
       installments: validated.installments ?? 1,
       currency: validated.currency.toUpperCase(),
       ownerCloserId: validated.ownerCloserId || null,
-      externalLabel: validated.externalLabel?.trim() || null,
       active: validated.active ?? true,
     };
 
@@ -88,12 +87,11 @@ export class UpdateProductUseCase {
     if (validated.name !== undefined) updatedData.name = validated.name.trim();
     if (validated.offerCode !== undefined) updatedData.offerCode = validated.offerCode?.trim() || null;
     if (validated.sku !== undefined) updatedData.sku = validated.sku?.trim() || null;
-    if (validated.sck !== undefined) updatedData.sck = validated.sck?.trim() || null;
+    if (validated.isMarketing !== undefined) updatedData.isMarketing = validated.isMarketing;
     if (validated.price !== undefined) updatedData.price = Number(validated.price);
     if (validated.installments !== undefined) updatedData.installments = validated.installments;
     if (validated.currency !== undefined) updatedData.currency = validated.currency.toUpperCase();
     if (validated.ownerCloserId !== undefined) updatedData.ownerCloserId = validated.ownerCloserId || null;
-    if (validated.externalLabel !== undefined) updatedData.externalLabel = validated.externalLabel?.trim() || null;
     if (validated.active !== undefined) updatedData.active = validated.active;
 
     project.updateProduct(productId, updatedData);

@@ -126,6 +126,7 @@ class InMemoryProjectRepository implements IProjectRepository {
       userId: data.userId,
       roleInProject: data.roleInProject,
       permissions: data.permissions ?? {},
+      sckCodes: data.sckCodes ?? [],
       assignedBy: data.assignedBy ?? null,
       assignedAt: new Date(),
     };
@@ -143,7 +144,8 @@ class InMemoryProjectRepository implements IProjectRepository {
     projectId: string,
     userId: string,
     roleInProject?: ProjectRole,
-    permissions?: Record<string, unknown>
+    permissions?: Record<string, unknown>,
+    sckCodes?: string[]
   ): Promise<ProjectMemberRecord> {
     const member = this.members.find(
       (m) => m.projectId === projectId && m.userId === userId
@@ -151,6 +153,7 @@ class InMemoryProjectRepository implements IProjectRepository {
     if (!member) throw new Error('Member not found');
     if (roleInProject) member.roleInProject = roleInProject;
     if (permissions) member.permissions = permissions;
+    if (sckCodes !== undefined) member.sckCodes = sckCodes;
     return member;
   }
 
@@ -225,6 +228,7 @@ async function runTests() {
     price: 1500,
     installments: 3,
     currency: 'USD',
+    isMarketing: false,
     active: true,
   };
   project.addProduct(newProd);

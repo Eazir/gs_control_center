@@ -162,6 +162,7 @@ model ProjectUser {
   userId        String      @map("user_id") @db.Uuid
   roleInProject ProjectRole @map("role_in_project")
   permissions   Json?       @default("{}") @db.JsonB
+  sckCodes      String[]    @default([]) @map("sck_codes")
   assignedBy    String?     @map("assigned_by") @db.Uuid
   assignedAt    DateTime    @default(now()) @map("assigned_at") @db.Timestamptz
 
@@ -285,6 +286,10 @@ model Sale {
   sck              String?   @map("sck")               // Source Checkout Key / Tracking
   closerId         String?   @map("closer_id") @db.Uuid // Referencia lógica a auth.users(id)
   status           String    // 'APPROVED', 'REFUNDED', 'CHARGEBACK', 'CANCELED', 'BILLET_PRINTED', etc.
+  
+  // Pipeline (Oportunidad)
+  pipelineStage    String    @default("uncontacted") @map("pipeline_stage")
+  pipelineSubstatus String?  @map("pipeline_substatus")
   
   // Valor financiero
   amount           Decimal   @db.Decimal(10, 2)

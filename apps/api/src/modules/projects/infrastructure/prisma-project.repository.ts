@@ -179,6 +179,9 @@ export class PrismaProjectRepository implements IProjectRepository {
     if (data.permissions !== undefined) {
       updateData.permissions = data.permissions as unknown as Prisma.InputJsonValue;
     }
+    if (data.sckCodes !== undefined) {
+      updateData.sckCodes = data.sckCodes;
+    }
 
     const record = await this.prisma.projectUser.upsert({
       where: {
@@ -192,6 +195,7 @@ export class PrismaProjectRepository implements IProjectRepository {
         userId: data.userId,
         roleInProject: data.roleInProject,
         permissions: (data.permissions ?? {}) as unknown as Prisma.InputJsonValue,
+        sckCodes: data.sckCodes ?? [],
         assignedBy: data.assignedBy ?? null,
       },
       update: updateData,
@@ -203,6 +207,7 @@ export class PrismaProjectRepository implements IProjectRepository {
       userId: record.userId,
       roleInProject: record.roleInProject as ProjectRole,
       permissions: (record.permissions as Record<string, unknown>) ?? {},
+      sckCodes: record.sckCodes,
       assignedBy: record.assignedBy,
       assignedAt: record.assignedAt,
     };
@@ -221,12 +226,16 @@ export class PrismaProjectRepository implements IProjectRepository {
     projectId: string,
     userId: string,
     roleInProject?: ProjectRole,
-    permissions?: Record<string, unknown>
+    permissions?: Record<string, unknown>,
+    sckCodes?: string[]
   ): Promise<ProjectMemberRecord> {
     const updateData: Prisma.ProjectUserUpdateInput = {};
     if (roleInProject !== undefined) updateData.roleInProject = roleInProject;
     if (permissions !== undefined) {
       updateData.permissions = permissions as unknown as Prisma.InputJsonValue;
+    }
+    if (sckCodes !== undefined) {
+      updateData.sckCodes = sckCodes;
     }
 
     const record = await this.prisma.projectUser.update({
@@ -245,6 +254,7 @@ export class PrismaProjectRepository implements IProjectRepository {
       userId: record.userId,
       roleInProject: record.roleInProject as ProjectRole,
       permissions: (record.permissions as Record<string, unknown>) ?? {},
+      sckCodes: record.sckCodes,
       assignedBy: record.assignedBy,
       assignedAt: record.assignedAt,
     };
@@ -262,6 +272,7 @@ export class PrismaProjectRepository implements IProjectRepository {
       userId: record.userId,
       roleInProject: record.roleInProject as ProjectRole,
       permissions: (record.permissions as Record<string, unknown>) ?? {},
+      sckCodes: record.sckCodes,
       assignedBy: record.assignedBy,
       assignedAt: record.assignedAt,
     }));
@@ -285,6 +296,7 @@ export class PrismaProjectRepository implements IProjectRepository {
       userId: record.userId,
       roleInProject: record.roleInProject as ProjectRole,
       permissions: (record.permissions as Record<string, unknown>) ?? {},
+      sckCodes: record.sckCodes,
       assignedBy: record.assignedBy,
       assignedAt: record.assignedAt,
     };

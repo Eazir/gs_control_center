@@ -129,15 +129,16 @@ interface ProjectLead {
   createdAt: string;
   installments?: number;
   offerCode?: string;
+  pipelineSubstatus?: string;
   latestTransaction?: TransactionData | null;
 }
 
 const DEFAULT_STAGES: PipelineStageConfig[] = [
   { id: 'uncontacted', name: 'Sin Contactar', color: '#6B7280' },
   { id: 'followup', name: 'En Seguimiento', color: '#3B82F6' },
-  { id: 'recovery', name: 'Para Recuperación', color: '#F59E0B' },
   { id: 'won', name: 'Ganado', color: '#10B981' },
-  { id: 'lost', name: 'Perdido', color: '#EF4444' },
+  { id: 'discarded', name: 'Descartados', color: '#64748B' },
+  { id: 'lost', name: 'Perdidos', color: '#EF4444' },
 ];
 
 export default function ProjectDetailsPage() {
@@ -170,6 +171,9 @@ export default function ProjectDetailsPage() {
   // Modal Profile
   const [selectedLead, setSelectedLead] = useState<LeadData | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionData | null>(null);
+
+  // Pagination for Leads Base
+  const [leadsPage, setLeadsPage] = useState(1);
 
   // Funciones de Drag & Drop para Kanban
   const handleDragStart = (e: React.DragEvent, leadId: string) => {
@@ -212,9 +216,8 @@ export default function ProjectDetailsPage() {
   const [products, setProducts] = useState<ProjectProduct[]>([]);
   const [newProdName, setNewProdName] = useState('');
   const [newProdOfferCode, setNewProdOfferCode] = useState('');
-  const [newProdSck, setNewProdSck] = useState('');
   const [newProdOwnerCloserId, setNewProdOwnerCloserId] = useState('');
-  const [newProdExternalLabel, setNewProdExternalLabel] = useState('');
+  const [newProdIsMarketing, setNewProdIsMarketing] = useState(false);
   const [newProdPrice, setNewProdPrice] = useState(0);
   const [newProdInstallments, setNewProdInstallments] = useState(1);
   const [newProdCurrency, setNewProdCurrency] = useState('USD');
@@ -277,7 +280,9 @@ export default function ProjectDetailsPage() {
   const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null);
 
   // ESTADO DE LEADS (MOCK / DEMO DEL PIPELINE Y BASE DE LEADS)
-  const [leads, setLeads] = useState<ProjectLead[]>([]);
+  const [leads, setLeads] = useState<ProjectLead[]>([]); // Para el Kanban (Transacciones separadas)
+  const [baseLeads, setBaseLeads] = useState<ProjectLead[]>([]); // Para la Tabla (Agrupado por persona)
+  
   const [leadSearch, setLeadSearch] = useState('');
   const [closerFilter, setCloserFilter] = useState('ALL');
   const [stageFilter, setStageFilter] = useState('ALL');
@@ -417,16 +422,62 @@ export default function ProjectDetailsPage() {
   const loadLeads = useCallback(async () => {
     if (!projectId) return;
     try {
-      const res = await fetchWithAuth(`/sales/project/${projectId}/leads`);
-      if (res.ok) {
-        const data = await res.json();
-        const rawLeads: ProjectLead[] = Array.isArray(data) ? data : [];
-        // Enriquecer con closerName usando la lista de miembros del proyecto
-        // members puede no estar aún cargado; se vuelve a enriquecer en el useMemo
-        setLeads(rawLeads);
+      const [salesRes, leadsRes] = await Promise.all([
+        fetchWithAuth(`/sales/project/${projectId}`),
+        fetchWithAuth(`/sales/project/${projectId}/leads`)
+      ]);
+
+      if (salesRes.ok) {
+        const data = await salesRes.json();
+        const sales = Array.isArray(data) ? data : [];
+        const mappedOpportunities = sales.map((sale: any) => ({
+          id: sale.id, // Kanban drag-and-drop will now use sale.id instead of lead.id
+          leadId: sale.lead?.id,
+          fullName: sale.lead?.name || 'Sin Nombre',
+          email: sale.lead?.email || 'Sin Correo',
+          phone: sale.lead?.phone || '',
+          stageId: sale.pipelineStage || 'uncontacted',
+          pipelineSubstatus: sale.pipelineSubstatus || undefined,
+          closerName: sale.closerName || 'Sin Asignar',
+          closerId: sale.closerId || undefined,
+          productName: sale.productName,
+          estimatedValue: sale.amount,
+          source: sale.source,
+          createdAt: sale.createdAt,
+          installments: sale.installments,
+          offerCode: sale.offerCode,
+          latestTransaction: sale, // Guardamos la venta completa para usarla en el modal
+        }));
+        setLeads(mappedOpportunities);
+      }
+
+      if (leadsRes.ok) {
+        const data = await leadsRes.json();
+        const apiLeads = Array.isArray(data) ? data : [];
+        // Map backend lead response to ProjectLead type
+        const mappedLeads = apiLeads.map((l: any) => ({
+          id: l.id,
+          leadId: l.id, // For Base de Leads, id is the Lead ID
+          fullName: l.fullName,
+          email: l.email,
+          phone: l.phone,
+          stageId: l.stageId,
+          closerName: 'Sin Asignar', // Se resolverá al renderizar si no lo trae
+          closerId: l.closerId,
+          productName: l.productName,
+          estimatedValue: l.estimatedValue,
+          source: l.source,
+          createdAt: l.lastContact,
+          installments: l.installments,
+          offerCode: l.offerCode,
+          latestTransaction: l.latestTransaction,
+          history: l.latestTransaction?.history, // Pasamos el historial!
+        }));
+        setBaseLeads(mappedLeads);
       }
     } catch {
       setLeads([]);
+      setBaseLeads([]);
     }
   }, [projectId]);
 
@@ -478,9 +529,9 @@ export default function ProjectDetailsPage() {
     
     // Impactar en backend
     try {
-      const res = await fetchWithAuth(`/sales/project/${projectId}/leads/${leadId}/stage`, {
+      const res = await fetchWithAuth(`/sales/project/${projectId}/transactions/${leadId}`, {
         method: 'POST',
-        body: JSON.stringify({ stageId: targetStageId }),
+        body: JSON.stringify({ pipelineStage: targetStageId }),
       });
       if (!res.ok) {
         // Revertir en caso de error
@@ -491,20 +542,7 @@ export default function ProjectDetailsPage() {
     }
   };
 
-  const handleImportLeadsCSVDynamic = async (mappedData: any[]) => {
-    try {
-      const res = await fetchWithAuth(`/pipeline/projects/${projectId}/leads/import-csv`, {
-        method: 'POST',
-        body: JSON.stringify(mappedData),
-      });
-      const resData = await res.json();
-      alert(`Importación completada. Exitosos: ${resData.successful}, Fallidos: ${resData.failed}`);
-      loadLeads();
-    } catch (err: any) {
-      alert(`Error importando el CSV: ${err.message || 'Desconocido'}`);
-      throw err;
-    }
-  };
+
 
   const handleCreateLead = (e: React.FormEvent) => {
     e.preventDefault();
@@ -989,9 +1027,8 @@ export default function ProjectDetailsPage() {
     setEditingProduct(null);
     setNewProdName('');
     setNewProdOfferCode('');
-    setNewProdSck('');
+    setNewProdIsMarketing(false);
     setNewProdOwnerCloserId('');
-    setNewProdExternalLabel('');
     setNewProdPrice(0);
     setNewProdInstallments(1);
     setNewProdCurrency('USD');
@@ -1003,9 +1040,8 @@ export default function ProjectDetailsPage() {
     setEditingProduct(product);
     setNewProdName(product.name);
     setNewProdOfferCode(product.offerCode || '');
-    setNewProdSck(product.sck || '');
+    setNewProdIsMarketing(product.isMarketing || false);
     setNewProdOwnerCloserId(product.ownerCloserId || '');
-    setNewProdExternalLabel(product.externalLabel || '');
     setNewProdPrice(product.price);
     setNewProdInstallments(product.installments || 1);
     setNewProdCurrency(product.currency || 'USD');
@@ -1046,12 +1082,11 @@ export default function ProjectDetailsPage() {
         body: JSON.stringify({
           name: newProdName.trim(),
           offerCode: newProdOfferCode.trim() ? newProdOfferCode.trim() : null,
-          sck: newProdSck.trim() ? newProdSck.trim() : null,
+          isMarketing: newProdIsMarketing,
           price: Number(newProdPrice),
           installments: Number(newProdInstallments) || 1,
           currency: newProdCurrency.toUpperCase(),
           ownerCloserId: newProdOwnerCloserId.trim() ? newProdOwnerCloserId.trim() : null,
-          externalLabel: newProdExternalLabel.trim() ? newProdExternalLabel.trim() : null,
           active: editingProduct ? editingProduct.active : true,
         }),
       });
@@ -1069,9 +1104,8 @@ export default function ProjectDetailsPage() {
       setEditingProduct(null);
       setNewProdName('');
       setNewProdOfferCode('');
-      setNewProdSck('');
+      setNewProdIsMarketing(false);
       setNewProdOwnerCloserId('');
-      setNewProdExternalLabel('');
       setNewProdInstallments(1);
       setIsProductModalOpen(false);
     } catch (err) {
@@ -1252,7 +1286,7 @@ export default function ProjectDetailsPage() {
   }, [leads, members, allUsers]);
 
   // -------------------------------------------------------------
-  // FILTRADO DE LEADS (PARA BASE DE LEADS Y PIPELINE)
+  // FILTRADO DE LEADS (PARA PIPELINE KANBAN)
   // -------------------------------------------------------------
   const filteredLeads = useMemo(() => {
     return enrichedLeads.filter((l) => {
@@ -1268,7 +1302,56 @@ export default function ProjectDetailsPage() {
 
       return matchSearch && matchCloser && matchStage;
     });
-  }, [enrichedLeads, leadSearch, closerFilter, stageFilter, paymentMethodFilter]);
+  }, [enrichedLeads, leadSearch, closerFilter, stageFilter]);
+
+  // -------------------------------------------------------------
+  // ENRICHMENT Y FILTRADO DE LEADS (PARA BASE DE LEADS)
+  // -------------------------------------------------------------
+  const enrichedBaseLeads = useMemo(() => {
+    const userMap = new Map<string, string>(
+      allUsers.map((u) => [u.id, u.fullName || u.email || u.id])
+    );
+    const memberMap = new Map<string, string>(
+      members.map((m) => [m.userId, m.userName || m.userEmail || m.userId])
+    );
+    return baseLeads.map((lead) => {
+      const closerId = lead.closerId || lead.latestTransaction?.closerId;
+      const resolvedName = closerId
+        ? (memberMap.get(closerId) || userMap.get(closerId) || null)
+        : null;
+      return {
+        ...lead,
+        closerName: resolvedName || lead.closerName || 'Sin closer',
+        closerId: closerId || undefined,
+      };
+    });
+  }, [baseLeads, members, allUsers]);
+
+  const filteredBaseLeads = useMemo(() => {
+    return enrichedBaseLeads.filter((l) => {
+      const matchSearch =
+        leadSearch === '' ||
+        l.fullName.toLowerCase().includes(leadSearch.toLowerCase()) ||
+        l.email.toLowerCase().includes(leadSearch.toLowerCase()) ||
+        l.phone.includes(leadSearch) ||
+        (l.productName && l.productName.toLowerCase().includes(leadSearch.toLowerCase()));
+
+      const matchCloser = closerFilter === 'ALL' || l.closerName === closerFilter;
+      const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
+
+      return matchSearch && matchCloser && matchStage;
+    });
+  }, [enrichedBaseLeads, leadSearch, closerFilter, stageFilter]);
+
+  // Reset pagination on filter change
+  useEffect(() => {
+    setLeadsPage(1);
+  }, [leadSearch, closerFilter, stageFilter]);
+
+  const paginatedLeads = useMemo(() => {
+    return filteredBaseLeads.slice((leadsPage - 1) * 50, leadsPage * 50);
+  }, [filteredBaseLeads, leadsPage]);
+  const totalPages = Math.ceil(filteredBaseLeads.length / 50);
 
   // Cálculos de métricas del proyecto
   const metricsCalc = useMemo(() => {
@@ -1541,7 +1624,7 @@ export default function ProjectDetailsPage() {
               </div>
 
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>Total Leads: <strong className="text-foreground">{filteredLeads.length}</strong></span>
+                <span>Total Leads: <strong className="text-foreground">{filteredBaseLeads.length}</strong></span>
                 <span>•</span>
                 <span>Facturación Ganada: <strong className="text-emerald-400 font-mono">${metricsCalc.totalWon.toLocaleString()} USD</strong></span>
               </div>
@@ -1607,7 +1690,8 @@ export default function ProjectDetailsPage() {
                           Sin prospectos
                         </div>
                       ) : (
-                        stageLeads.map((lead) => {
+                        <>
+                          {stageLeads.slice(0, 20).map((lead) => {
                           const cleanPhone = lead.phone.replace(/[^0-9]/g, '');
                           return (
                             <div
@@ -1669,7 +1753,14 @@ export default function ProjectDetailsPage() {
                                 </div>
                               </div>
 
-                              <div className="flex items-center justify-end pt-2 border-t border-border/40">
+                              <div className="flex items-center justify-between pt-2 border-t border-border/40">
+                                <div className="flex items-center gap-1">
+                                  {lead.pipelineSubstatus && (
+                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-5 bg-primary/5 text-primary border-primary/20">
+                                      {lead.pipelineSubstatus}
+                                    </Badge>
+                                  )}
+                                </div>
                                 <Select 
                                   value={lead.stageId} 
                                   onValueChange={(val: string) => handleMoveLeadStage(lead.id, val)}
@@ -1691,7 +1782,13 @@ export default function ProjectDetailsPage() {
                               </div>
                             </div>
                           );
-                        })
+                        })}
+                        {stageLeads.length > 20 && (
+                          <div className="text-center py-2 text-[11px] font-bold text-muted-foreground bg-muted/20 rounded-xl border border-border/50">
+                            + {stageLeads.length - 20} prospectos ocultos
+                          </div>
+                        )}
+                      </>
                       )}
                     </div>
                   </div>
@@ -1785,14 +1882,14 @@ export default function ProjectDetailsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredLeads.length === 0 ? (
+                  {paginatedLeads.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-8 text-xs text-muted-foreground">
                         No se encontraron prospectos con los filtros actuales.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredLeads.map((lead) => {
+                    paginatedLeads.map((lead) => {
                       const stageObj = pipelineStages.find((s) => s.id === lead.stageId);
                       const cleanPhone = lead.phone.replace(/[^0-9]/g, '');
 
@@ -1862,6 +1959,38 @@ export default function ProjectDetailsPage() {
                 </TableBody>
               </Table>
             </div>
+            
+            {/* Controles de Paginación */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between bg-[#0B0D13] p-3 rounded-xl border border-border">
+                <span className="text-xs text-muted-foreground">
+                  Mostrando {((leadsPage - 1) * 50) + 1} a {Math.min(leadsPage * 50, filteredBaseLeads.length)} de {filteredBaseLeads.length} leads
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLeadsPage(p => Math.max(1, p - 1))}
+                    disabled={leadsPage === 1}
+                    className="h-8 text-xs"
+                  >
+                    Anterior
+                  </Button>
+                  <span className="text-xs font-bold px-2">
+                    Página {leadsPage} de {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLeadsPage(p => Math.min(totalPages, p + 1))}
+                    disabled={leadsPage === totalPages}
+                    className="h-8 text-xs"
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1871,9 +2000,12 @@ export default function ProjectDetailsPage() {
         <Dialog open={isLeadImportModalOpen} onOpenChange={setIsLeadImportModalOpen}>
           <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 overflow-hidden">
             <CsvImporter 
+              projectId={projectId}
               mode="leads" 
-              onClose={() => setIsLeadImportModalOpen(false)} 
-              onImport={handleImportLeadsCSVDynamic} 
+              onClose={() => {
+                setIsLeadImportModalOpen(false);
+                loadLeads();
+              }} 
             />
           </DialogContent>
         </Dialog>
@@ -2603,10 +2735,9 @@ export default function ProjectDetailsPage() {
                               <TableCell className="font-semibold text-xs py-2 text-foreground">
                                 {p.name}
                                 {p.ownerCloserId && <span className="block text-[10px] text-blue-400">Propietario: {allUsers.find(u => u.id === p.ownerCloserId)?.fullName || p.ownerCloserId}</span>}
-                                {p.externalLabel && <span className="block text-[10px] text-purple-400">Label: {p.externalLabel}</span>}
+                                {p.isMarketing && <span className="block text-[10px] text-purple-400">Marketing</span>}
                               </TableCell>
                               <TableCell className="text-xs font-mono text-muted-foreground py-2">{p.offerCode || '—'}</TableCell>
-                              <TableCell className="text-xs font-mono text-emerald-400 py-2">{p.sck || '—'}</TableCell>
                               <TableCell className="text-xs font-mono font-bold text-right py-2 text-primary">
                                 ${p.price} {p.currency}
                               </TableCell>
@@ -2702,14 +2833,17 @@ export default function ProjectDetailsPage() {
                               />
                             </div>
                             <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">SCK / Tracking (Opcional)</Label>
-                              <Input
-                                placeholder="Ej: Agustin"
-                                value={newProdSck}
-                                onChange={(e) => setNewProdSck(e.target.value)}
-                                onFocus={(e) => e.target.select()}
-                                className="bg-[#0B0D13] text-xs h-9 font-mono"
-                              />
+                              <Label className="text-[11px] text-muted-foreground">Marketing</Label>
+                              <div className="flex items-center h-9 space-x-2 bg-[#0B0D13] px-3 rounded-md border border-input">
+                                <Checkbox 
+                                  id="isMarketing" 
+                                  checked={newProdIsMarketing} 
+                                  onCheckedChange={(c) => setNewProdIsMarketing(!!c)}
+                                />
+                                <Label htmlFor="isMarketing" className="text-[11px] text-foreground">
+                                  Es de Marketing
+                                </Label>
+                              </div>
                             </div>
                           </div>
 
@@ -2773,16 +2907,6 @@ export default function ProjectDetailsPage() {
                                   ))}
                                 </SelectContent>
                               </Select>
-                            </div>
-                            <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">Label Externo (Opcional)</Label>
-                              <Input
-                                placeholder="Ej. Productor Secundario"
-                                value={newProdExternalLabel}
-                                onChange={(e) => setNewProdExternalLabel(e.target.value)}
-                                onFocus={(e) => e.target.select()}
-                                className="bg-[#0B0D13] text-xs h-9"
-                              />
                             </div>
                           </div>
 
@@ -3568,6 +3692,16 @@ export default function ProjectDetailsPage() {
           onClose={() => setSelectedLead(null)}
           lead={selectedLead}
           stageName={selectedLead ? (pipelineStages.find(s => s.id === selectedLead.stageId)?.name || '') : ''}
+          projectId={projectId as string}
+          activeClosers={activeClosersInProject.map(c => {
+            const u = allUsers.find(x => x.id === c.userId);
+            return { id: c.userId, name: u?.fullName || 'Desconocido' };
+          })}
+          pipelineStages={pipelineStages}
+          onSave={() => {
+            loadLeads();
+            setSelectedLead(null);
+          }}
         />
 
         <TransactionDetailModal

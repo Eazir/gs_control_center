@@ -43,6 +43,7 @@ export interface ProjectMemberRecord {
   userId: string;
   roleInProject: ProjectRole;
   permissions: Record<string, unknown>;
+  sckCodes: string[];
   assignedBy?: string | null;
   assignedAt: Date;
 }
@@ -52,6 +53,7 @@ export interface AddMemberData {
   userId: string;
   roleInProject: ProjectRole;
   permissions?: Record<string, unknown>;
+  sckCodes?: string[];
   assignedBy?: string | null;
 }
 
@@ -72,7 +74,8 @@ export interface IProjectRepository {
     projectId: string,
     userId: string,
     roleInProject?: ProjectRole,
-    permissions?: Record<string, unknown>
+    permissions?: Record<string, unknown>,
+    sckCodes?: string[]
   ): Promise<ProjectMemberRecord>;
   findMembers(projectId: string): Promise<ProjectMemberRecord[]>;
   findMember(projectId: string, userId: string): Promise<ProjectMemberRecord | null>;
