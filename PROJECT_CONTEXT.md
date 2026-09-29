@@ -1,4 +1,4 @@
-# PROJECT CONTEXT — GrowthShell Centro de Mando (`gs_control_center`)
+# PROJECT CONTEXT — GrowthSell Centro de Mando (`gs_control_center`)
 
 > **Documento de Contexto Maestro del Proyecto**  
 > **Versión:** 1.0.0  
@@ -10,7 +10,7 @@
 ## 1. Visión y Objetivos del Proyecto
 
 ### 1.1 Contexto del Negocio
-**GrowthShell** se dedica a estructurar, capacitar y operar **unidades comerciales (equipos de ventas de alto rendimiento / closers)** para creadores de infoproductos y empresas digitales que comercializan cursos, mentorías, membresías, productos digitales y servicios high-ticket.
+**GrowthSell** se dedica a estructurar, capacitar y operar **unidades comerciales (equipos de ventas de alto rendimiento / closers)** para creadores de infoproductos y empresas digitales que comercializan cursos, mentorías, membresías, productos digitales y servicios high-ticket.
 
 ### 1.2 El Problema
 Históricamente, la operación comercial se gestionaba mediante hojas de cálculo en **Google Sheets** combinadas con **Google AppScripts**, generando:
@@ -19,7 +19,7 @@ Históricamente, la operación comercial se gestionaba mediante hojas de cálcul
 - **Procesamiento manual:** Ventas registradas a mano o con scripts frágiles propensos a duplicados y caídas.
 - **Aislamiento deficiente:** Dificultad para entregar reportes en tiempo real y dashboards limpios a los clientes (dueños de los productos).
 
-### 1.3 La Solución: Centro de Mando GrowthShell
+### 1.3 La Solución: Centro de Mando GrowthSell
 Una plataforma web empresarial y centralizada que actúa como el **Centro de Mando** para todas las unidades comerciales:
 1. **Centralización Multi-Proyecto:** Gestión unificada de múltiples lanzamientos y proyectos comerciales independientes con aislamiento de datos.
 2. **Ingesta Automática e Idempotente:** Conexión directa vía API y Webhooks con plataformas de venta (**Hotmart**) y CRMs (**Centralize CRM**, **GoHighLevel**).
@@ -63,7 +63,7 @@ Una plataforma web empresarial y centralizada que actúa como el **Centro de Man
 ## 4. Arquitectura de Microservicios y Base de Datos
 
 ### 4.1 Patrón: *Database per Service*
-GrowthShell adopta una arquitectura de microservicios con aislamiento total de datos: **cada microservicio es dueño absoluto de su propia base de datos y su propio usuario/rol en PostgreSQL**.
+GrowthSell adopta una arquitectura de microservicios con aislamiento total de datos: **cada microservicio es dueño absoluto de su propia base de datos y su propio usuario/rol en PostgreSQL**.
 
 ```
                            Internet / Clientes

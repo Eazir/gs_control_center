@@ -6,7 +6,7 @@
 
 ## 1. Para qué sirve
 
-Permite crear, configurar y supervisar las unidades comerciales (proyectos de infoproductos) de GrowthShell: definir las metas de facturación mensual esperadas, asignar a los Directores Comerciales a cargo, estructurar el catálogo de infoproductos y tickets de venta, y afiliar al equipo de closers responsable de cerrar las llamadas.
+Permite crear, configurar y supervisar las unidades comerciales (proyectos de infoproductos) de GrowthSell: definir las metas de facturación mensual esperadas, asignar a los Directores Comerciales a cargo, estructurar el catálogo de infoproductos y tickets de venta, y afiliar al equipo de closers responsable de cerrar las llamadas.
 
 ---
 

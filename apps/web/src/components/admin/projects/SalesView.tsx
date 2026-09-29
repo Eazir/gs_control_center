@@ -24,6 +24,7 @@ import {
 import { SaleListItem, ProductItem } from '@gs/contracts';
 import { Badge } from '@/components/ui/badge';
 import { TransactionDetailModal } from './TransactionDetailModal';
+import { CsvImporter } from '@/components/csv-importer';
 
 export interface SalesViewMember {
   id: string;
@@ -505,49 +506,19 @@ export function SalesView({
     }
   };
 
-  // Importación CSV
-  const handleImportCSV = async () => {
-    if (!csvText.trim()) return;
-    setIsSaving(true);
+  // Importación dinámica CSV (Desde el nuevo CsvImporter)
+  const handleImportCSVDynamic = async (mappedData: any[]) => {
     try {
-      const lines = csvText.split('\n').filter((l) => l.trim().length > 0);
-      const firstLine = lines[0];
-      if (!firstLine) return;
-      const headers = firstLine.split(',').map((h) => h.trim());
-
-      const payload = lines.slice(1).map((line) => {
-        const values = line.split(',');
-        const obj: Record<string, string> = {};
-        headers.forEach((h, i) => {
-          if (values[i]) obj[h] = values[i].trim();
-        });
-
-        return {
-          leadEmail: obj.email || obj.leadEmail,
-          leadName: obj.name || obj.leadName || 'Sin Nombre',
-          leadPhone: obj.phone || obj.leadPhone,
-          productName: obj.product || obj.productName || 'Producto Importado',
-          amount: Number(obj.amount || obj.precio || 0),
-          currency: obj.currency || obj.moneda || 'USD',
-          status: obj.status || obj.estado || 'APPROVED',
-        };
-      });
-
-      const res = await fetchWithAuth(`/sales/project/${projectId}/import`, {
+      const res = await fetchWithAuth(`/sales/project/${projectId}/import-csv`, {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify(mappedData),
       });
-
       const resData = await res.json();
       alert(`Importación completada. Exitosos: ${resData.successful}, Fallidos: ${resData.failed}`);
-      setIsImportModalOpen(false);
-      setCsvText('');
       await loadSales();
-    } catch (err) {
-      alert('Error importando el CSV');
-      console.error(err);
-    } finally {
-      setIsSaving(false);
+    } catch (err: any) {
+      alert(`Error importando el CSV: ${err.message || 'Desconocido'}`);
+      throw err;
     }
   };
 
@@ -1108,46 +1079,15 @@ export function SalesView({
       {/* ========================================================================= */}
       {/* MODAL: IMPORTAR CSV                                                       */}
       {/* ========================================================================= */}
+      {/* MODAL IMPORTACION (WIZARD) */}
+      {/* ========================================================================= */}
       <Dialog open={isImportModalOpen} onOpenChange={setIsImportModalOpen}>
-        <DialogContent className="bg-background border-border text-foreground sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-foreground flex items-center gap-2">
-              <Upload className="w-5 h-5 text-primary" />
-              Importar Ventas Históricas
-            </DialogTitle>
-            <DialogDescription className="text-muted-foreground text-xs">
-              Pega el contenido de tu CSV. Cabeceras requeridas:{' '}
-              <code className="text-primary font-mono">email, name, product, amount, currency, status</code>.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <textarea
-              className="w-full h-44 bg-background border border-border rounded-md p-3 text-xs font-mono text-foreground focus:outline-none focus:border-primary"
-              placeholder="email,name,product,amount,currency,status&#10;juan@ejemplo.com,Juan Perez,Curso Pro,497,USD,APPROVED"
-              value={csvText}
-              onChange={(e) => setCsvText(e.target.value)}
-            />
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setIsImportModalOpen(false)}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={isSaving || !csvText.trim()}
-              onClick={handleImportCSV}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
-            >
-              {isSaving ? 'Importando...' : 'Procesar CSV'}
-            </Button>
-          </DialogFooter>
+        <DialogContent className="bg-background border-border text-foreground max-w-4xl">
+          <CsvImporter 
+            mode="sales" 
+            onClose={() => setIsImportModalOpen(false)} 
+            onImport={handleImportCSVDynamic} 
+          />
         </DialogContent>
       </Dialog>
 

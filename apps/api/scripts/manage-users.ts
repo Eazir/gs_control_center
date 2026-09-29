@@ -99,9 +99,9 @@ async function main() {
     if (action === 'list') {
       await listUsers();
     } else if (action === 'invite') {
-      const email = process.argv[3] || 'closer.demo@growthshell.com';
+      const email = process.argv[3] || 'closer.demo@growthsell.com';
       const role = process.argv[4] || 'CLOSER';
-      const name = process.argv[5] || 'Closer Demo GrowthShell';
+      const name = process.argv[5] || 'Closer Demo GrowthSell';
       await createInvite(email, role, name);
     } else {
       console.log('Uso:');

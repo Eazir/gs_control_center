@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, UseGuards, Request, BadRequestException, Inject, ForbiddenException } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { JwtAuthGuard } from '../auth';
-import { ManualSaleSchema } from '@gs/contracts';
+import { JwtPayload, ManualSaleSchema, CsvSaleImportSchema } from '@gs/contracts';
 
 @Controller('sales')
 @UseGuards(JwtAuthGuard)
@@ -14,18 +14,18 @@ export class SalesController {
   @Get('project/:projectId')
   async listProjectSales(
     @Param('projectId') projectId: string,
-    @Request() req: { user: { id: string; role: string } }
+    @Request() req: { user: JwtPayload }
   ) {
     if (!this.salesService) {
       return [];
     }
-    return this.salesService.listSales(projectId, req.user);
+    return this.salesService.listSales(projectId, { id: req.user.sub, role: req.user.role });
   }
 
   @Get('project/:projectId/transactions')
   async listProjectTransactions(
     @Param('projectId') projectId: string,
-    @Request() req: { user: { id: string; role: string } }
+    @Request() req: { user: JwtPayload }
   ) {
     if (req.user.role === 'CLOSER') {
       throw new ForbiddenException('Los closers no tienen acceso al historial de transacciones global.');
@@ -39,10 +39,10 @@ export class SalesController {
   @Get('project/:projectId/leads')
   async listProjectLeads(
     @Param('projectId') projectId: string,
-    @Request() req: { user: { id: string; role: string } }
+    @Request() req: { user: JwtPayload }
   ) {
     if (!this.salesService) return [];
-    return this.salesService.listLeads(projectId, req.user);
+    return this.salesService.listLeads(projectId, { id: req.user.sub, role: req.user.role });
   }
 
   @Post('project/:projectId/leads/:leadId/stage')
@@ -50,12 +50,12 @@ export class SalesController {
     @Param('projectId') projectId: string,
     @Param('leadId') leadId: string,
     @Body('stageId') stageId: string,
-    @Request() req: { user: { id: string; role: string } }
+    @Request() req: { user: JwtPayload }
   ) {
     if (!stageId) {
       throw new BadRequestException('El stageId es obligatorio');
     }
-    return this.salesService.updateLeadStage(projectId, leadId, stageId, req.user);
+    return this.salesService.updateLeadStage(projectId, leadId, stageId, { id: req.user.sub, role: req.user.role });
   }
 
   @Get('project/:projectId/products/:productId/sales-count')
@@ -71,21 +71,21 @@ export class SalesController {
   async registerManualSale(
     @Param('projectId') projectId: string,
     @Body() payload: unknown,
-    @Request() req: { user: { id: string } }
+    @Request() req: { user: JwtPayload }
   ) {
     const result = ManualSaleSchema.safeParse(payload);
     if (!result.success) {
       throw new BadRequestException(result.error.errors);
     }
     
-    return this.salesService.registerManualSale(projectId, result.data, req.user.id);
+    return this.salesService.registerManualSale(projectId, result.data, req.user.sub);
   }
 
-  @Post('project/:projectId/import')
-  async importSales(
+  @Post('project/:projectId/import-csv')
+  async importSalesCsv(
     @Param('projectId') projectId: string,
     @Body() payload: unknown[],
-    @Request() req: { user: { id: string } }
+    @Request() req: { user: JwtPayload }
   ) {
     if (!Array.isArray(payload)) {
       throw new BadRequestException('El payload debe ser un array de ventas');
@@ -98,10 +98,11 @@ export class SalesController {
     };
     
     for (const item of payload) {
-      const parsed = ManualSaleSchema.safeParse(item);
+      // Usar schema de importación CSV
+      const parsed = CsvSaleImportSchema.safeParse(item);
       if (parsed.success) {
         try {
-          await this.salesService.registerManualSale(projectId, parsed.data, req.user.id);
+          await this.salesService.importSaleCsv(projectId, parsed.data, req.user.sub);
           results.successful++;
         } catch (e: unknown) {
           results.failed++;

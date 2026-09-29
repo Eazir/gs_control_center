@@ -204,8 +204,8 @@ async function runTests() {
   console.info('\n1. Probando Entidad de Dominio ProjectEntity...');
   const project = ProjectEntity.create({
     id: '11111111-1111-1111-1111-111111111111',
-    name: 'GrowthShell Master',
-    slug: 'growthshell-master',
+    name: 'GrowthSell Master',
+    slug: 'growthsell-master',
     status: 'DRAFT',
   });
 
@@ -288,7 +288,7 @@ async function runTests() {
   const directorId = 'd1111111-1111-1111-1111-111111111111';
   (authMock as unknown as MockAuthPublicService).setUser({
     id: directorId,
-    email: 'director@growthshell.com',
+    email: 'director@growthsell.com',
     fullName: 'Carlos Director Comercial',
     role: 'DIRECTOR',
     isActive: true,
@@ -417,7 +417,7 @@ async function runTests() {
   const closerUser: UserPublicProfile = {
     id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
     fullName: 'Carlos Closer',
-    email: 'carlos@growthshell.com',
+    email: 'carlos@growthsell.com',
     role: 'CLOSER',
     isActive: true,
     phone: '+573001234567',
@@ -425,7 +425,7 @@ async function runTests() {
   const clientUser: UserPublicProfile = {
     id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
     fullName: 'Diana Cliente',
-    email: 'diana@growthshell.com',
+    email: 'diana@growthsell.com',
     role: 'CLIENTE',
     isActive: true,
     phone: '+573109876543',

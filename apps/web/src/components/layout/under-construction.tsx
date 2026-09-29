@@ -83,7 +83,7 @@ export function UnderConstructionView({
             {/* Imagen de Construcción */}
             <Image
               src="/assets/under-construction.jpg"
-              alt="Módulo en construcción GrowthShell"
+              alt="Módulo en construcción GrowthSell"
               fill
               className="object-cover object-center opacity-70 hover:opacity-85 transition-opacity duration-700"
               priority

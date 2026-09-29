@@ -1,6 +1,6 @@
-# GrowthShell — Base de Datos
+# GrowthSell — Base de Datos
 
-Instrucciones para levantar la base de datos de GrowthShell desde cero.
+Instrucciones para levantar la base de datos de GrowthSell desde cero.
 Arquitectura: **1 base de datos por microservicio**, cada una con su rol dueño.
 
 ## Requisitos

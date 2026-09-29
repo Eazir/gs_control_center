@@ -1,6 +1,6 @@
-# Utilidad Criptográfica de GrowthShell (`scripts/crypto-tool.mjs`)
+# Utilidad Criptográfica de GrowthSell (`scripts/crypto-tool.mjs`)
 
-Herramienta de línea de comandos (CLI) estándar para la administración criptográfica de **GrowthShell Centro de Mando**. Proporciona generación de claves para `.env`, cifrado/descifrado autenticado con AES-256-GCM y generación/verificación de hashes Argon2id para el Super Admin de la aplicación.
+Herramienta de línea de comandos (CLI) estándar para la administración criptográfica de **GrowthSell Centro de Mando**. Proporciona generación de claves para `.env`, cifrado/descifrado autenticado con AES-256-GCM y generación/verificación de hashes Argon2id para el Super Admin de la aplicación.
 
 ---
 
@@ -57,7 +57,7 @@ node scripts/crypto-tool.mjs seed-admin <email> <contraseña> [nombre_completo]
 
 **Ejemplo:**
 ```bash
-node scripts/crypto-tool.mjs seed-admin admin@growthshell.com "AdminPassword123!" "Super Administrador"
+node scripts/crypto-tool.mjs seed-admin admin@growthsell.com "AdminPassword123!" "Super Administrador"
 ```
 
 **Inyección directa a Docker PostgreSQL:**
@@ -65,11 +65,11 @@ Para ejecutar la creación directamente sobre la base de datos de desarrollo:
 
 * **En PowerShell (Windows):**
   ```powershell
-  node scripts/crypto-tool.mjs seed-admin admin@growthshell.com "AdminPassword123!" "Super Administrador" | docker exec -i gs_control_center-postgres-1 psql -U gs_admin -d gs_control_center
+  node scripts/crypto-tool.mjs seed-admin admin@growthsell.com "AdminPassword123!" "Super Administrador" | docker exec -i gs_control_center-postgres-1 psql -U gs_admin -d gs_control_center
   ```
 * **En Linux / macOS (Bash):**
   ```bash
-  node scripts/crypto-tool.mjs seed-admin admin@growthshell.com "AdminPassword123!" "Super Administrador" | docker exec -i gs_control_center-postgres-1 psql -U gs_admin -d gs_control_center
+  node scripts/crypto-tool.mjs seed-admin admin@growthsell.com "AdminPassword123!" "Super Administrador" | docker exec -i gs_control_center-postgres-1 psql -U gs_admin -d gs_control_center
   ```
 
 ---

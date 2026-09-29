@@ -4,7 +4,7 @@ Ocho fases. Cada una termina en algo que se puede ejecutar y demostrar de punta 
 Las duraciones son para un equipo pequeño (1–2 personas) trabajando con agentes; ajústalas a tu ritmo real.
 
 **Regla de desarrollo paralelo Funcionalidad-Interfaz:**
-Por cada servicio o módulo de dominio, se implementa en paralelo la **Funcionalidad (Backend / DB / Contratos)** y su correspondiente **Interfaz de Usuario (UI / UX)**. La UI se construye exclusivamente sobre **Next.js App Router (RSC por defecto) + shadcn/ui + Tailwind CSS + Lucide Icons**, bajo un **tema oscuro premium** (Dark theme `#090A0F` / `#12151C`) con acento dorado corporativo (**GrowthShell Gold** `#F59E0B`), respetando la disposición visual del Centro de Mando y garantizando siempre los **cuatro estados de vista**: *loading* (skeleton proporcional), *empty* (con CTA), *error* (accionable con reintento) y *data*.
+Por cada servicio o módulo de dominio, se implementa en paralelo la **Funcionalidad (Backend / DB / Contratos)** y su correspondiente **Interfaz de Usuario (UI / UX)**. La UI se construye exclusivamente sobre **Next.js App Router (RSC por defecto) + shadcn/ui + Tailwind CSS + Lucide Icons**, bajo un **tema oscuro premium** (Dark theme `#090A0F` / `#12151C`) con acento dorado corporativo (**GrowthSell Gold** `#F59E0B`), respetando la disposición visual del Centro de Mando y garantizando siempre los **cuatro estados de vista**: *loading* (skeleton proporcional), *empty* (con CTA), *error* (accionable con reintento) y *data*.
 
 **Regla que ordena todo el plan:** la primera venta real ingresada automáticamente desde Hotmart debe
 llegar en la fase 4. Todo lo anterior existe para soportar ese momento. Si una fase se alarga, recorta
@@ -33,8 +33,8 @@ alcance antes que posponer esa fecha.
   - [x] Helper `withRls()` y políticas RLS en PostgreSQL con suite de integración aprobada al 100%.
   - [x] Actualizar `DICCIONARIO.md` con schemas `auth` y `projects`.
 - **Interfaz (UI / UX en `apps/web`) [Completado ✔]:**
-  - [x] **Design System Base:** Configuración de Tailwind, tokens de color (Dark theme + GrowthShell Gold `#F59E0B`), tipografía moderna y catálogo inicial de componentes shadcn/ui (Button, Input, Card, Badge, Label, Alert, Skeleton).
-  - [x] **Pantalla `Auth - Login`:** Tarjeta centrada con logo hexagonal dorado de GrowthShell, inputs de correo y contraseña con toggles, botón dorado "Iniciar sesión", enlace "¿Olvidaste tu contraseña?" y manejo de estados loading/error/success.
+  - [x] **Design System Base:** Configuración de Tailwind, tokens de color (Dark theme + GrowthSell Gold `#F59E0B`), tipografía moderna y catálogo inicial de componentes shadcn/ui (Button, Input, Card, Badge, Label, Alert, Skeleton).
+  - [x] **Pantalla `Auth - Login`:** Tarjeta centrada con logo hexagonal dorado de GrowthSell, inputs de correo y contraseña con toggles, botón dorado "Iniciar sesión", enlace "¿Olvidaste tu contraseña?" y manejo de estados loading/error/success.
   - [x] **Pantalla `Auth - Crear Contraseña / Aceptar Invitación`:** Tarjeta centrada de bienvenida, pill con email de la invitación, inputs de nueva contraseña y confirmación, botón dorado "ACEPTAR", validación Zod en tiempo real.
 
 **Terminado cuando:** un usuario inicia sesión desde la interfaz web o mediante API, recibe su cookie segura, y las pruebas de aislamiento RLS y CASL confirman que no puede leer filas ajenas. (✔ Verificado en Backend y Frontend)
@@ -48,7 +48,7 @@ alcance antes que posponer esa fecha.
   - [ ] GraphQL con codegen de tipos de punta a punta entre backend y frontend.
 - **Interfaz (UI / UX en `apps/web`):**
   - [ ] **Shell Administrativo (Sidebar & Layout):**
-    - Barra lateral oscura con logo hexagonal "GrowthShell CENTRO DE MANDO".
+    - Barra lateral oscura con logo hexagonal "GrowthSell CENTRO DE MANDO".
     - Menú de navegación activo: `Dashboard Global`, `Todos los Proyectos`, `Usuarios y Roles`, `Integraciones`, `Ajustes`.
     - Cabecera con breadcrumbs, fecha actual y selector de proyectos activos.
     - Footer del sidebar con tarjeta/pill de usuario autenticado (avatar con iniciales, nombre, rol y acción de logout).
@@ -126,7 +126,7 @@ alcance antes que posponer esa fecha.
 - **Interfaz (UI / UX en `apps/web` - Según maqueta de referencia):**
   - [ ] **Pantalla `Admin - Dashboard Global`:**
     - **Tarjetas de Métricas Generales (KPI Cards):** Facturación Bruta, Ingresos Netos, Ventas Totales, Ticket Promedio, con indicadores de variación porcentual vs mes anterior.
-    - **Gráfico Comparativo "Facturación vs Ingresos":** Gráfico de barras interactivo diario/semanal con la paleta oscura y barras en tono GrowthShell Gold y neutral.
+    - **Gráfico Comparativo "Facturación vs Ingresos":** Gráfico de barras interactivo diario/semanal con la paleta oscura y barras en tono GrowthSell Gold y neutral.
     - **Tarjeta "Origen de Ventas":** Desglose de ingresos por producto con montos y porcentajes de contribución.
     - **Tabla "Rendimiento por Proyecto":** Tabla con columnas de Proyecto, Fact. Bruta, Comisiones, Estado y barra de progreso dorada de Cumplimiento de Meta.
   - [ ] **Dashboard Ejecutivo del rol `CLIENTE`:**

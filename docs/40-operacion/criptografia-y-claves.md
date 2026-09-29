@@ -1,6 +1,6 @@
 # Gestión de Claves Criptográficas y Super Admin
 
-Este runbook describe los procedimientos operativos para la generación de claves maestras, cifrado de secretos de integración y aprovisionamiento del Super Administrador en **GrowthShell Centro de Mando**.
+Este runbook describe los procedimientos operativos para la generación de claves maestras, cifrado de secretos de integración y aprovisionamiento del Super Administrador en **GrowthSell Centro de Mando**.
 
 ---
 
@@ -45,24 +45,24 @@ El acceso inicial al Centro de Mando requiere un usuario con rol `SUPER_ADMIN` e
 
 1. **Generar el SQL con contraseña segura:**
    ```bash
-   node scripts/crypto-tool.mjs seed-admin admin@growthshell.com "PasswordRobusto2026!" "Super Administrador"
+   node scripts/crypto-tool.mjs seed-admin admin@growthsell.com "PasswordRobusto2026!" "Super Administrador"
    ```
 
 2. **Aplicar en la base de datos PostgreSQL:**
    * **En entorno local / desarrollo (Docker):**
      ```powershell
-     node scripts/crypto-tool.mjs seed-admin admin@growthshell.com "PasswordRobusto2026!" "Super Administrador" | docker exec -i gs_control_center-postgres-1 psql -U gs_admin -d gs_control_center
+     node scripts/crypto-tool.mjs seed-admin admin@growthsell.com "PasswordRobusto2026!" "Super Administrador" | docker exec -i gs_control_center-postgres-1 psql -U gs_admin -d gs_control_center
      ```
    * **En servidor VPS (Producción):**
      ```bash
-     node scripts/crypto-tool.mjs seed-admin admin@growthshell.com "PasswordRobusto2026!" "Super Administrador" | docker compose exec -T postgres psql -U $POSTGRES_USER -d gs_control_center
+     node scripts/crypto-tool.mjs seed-admin admin@growthsell.com "PasswordRobusto2026!" "Super Administrador" | docker compose exec -T postgres psql -U $POSTGRES_USER -d gs_control_center
      ```
 
 3. **Verificación:**
    ```sql
    SELECT id, email, role, status, full_name, created_at 
    FROM auth.users 
-   WHERE email = 'admin@growthshell.com';
+   WHERE email = 'admin@growthsell.com';
    ```
 
 > [!NOTE]

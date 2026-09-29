@@ -1,4 +1,4 @@
-# DICCIONARIO DE DATOS — GrowthShell Centro de Mando (`gs_control_center`)
+# DICCIONARIO DE DATOS — GrowthSell Centro de Mando (`gs_control_center`)
 
 Contrato canónico de base de datos para PostgreSQL 16.
 Cualquier cambio o adición a tablas y columnas debe documentarse en este archivo y en las migraciones de Prisma correspondientes.

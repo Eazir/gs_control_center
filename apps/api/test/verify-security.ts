@@ -38,7 +38,7 @@ async function main() {
 
   const accessToken = await tokenService.signAccessToken({
     sub: sampleUserId,
-    email: 'closer@growthshell.com',
+    email: 'closer@growthsell.com',
     role: 'CLOSER',
     sessionId: sampleSessionId,
   });

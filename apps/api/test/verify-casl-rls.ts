@@ -107,7 +107,7 @@ async function runCaslAndRlsVerification() {
       data: [
         {
           id: closer1Id,
-          email: 'closer1_rls@growthshell.com',
+          email: 'closer1_rls@growthsell.com',
           passwordHash: 'dummy_hash',
           fullName: 'Closer RLS Uno',
           role: 'CLOSER',
@@ -115,7 +115,7 @@ async function runCaslAndRlsVerification() {
         },
         {
           id: closer2Id,
-          email: 'closer2_rls@growthshell.com',
+          email: 'closer2_rls@growthsell.com',
           passwordHash: 'dummy_hash',
           fullName: 'Closer RLS Dos',
           role: 'CLOSER',
@@ -123,7 +123,7 @@ async function runCaslAndRlsVerification() {
         },
         {
           id: adminTestId,
-          email: 'admin_rls@growthshell.com',
+          email: 'admin_rls@growthsell.com',
           passwordHash: 'dummy_hash',
           fullName: 'Admin RLS Test',
           role: 'SUPER_ADMIN',

@@ -42,7 +42,7 @@ psql: ##: Abre psql sobre la base de desarrollo
 studio: ##: Abre Prisma Studio
 	$(COMPOSE_DEV) exec api pnpm --filter api prisma studio
 seed-admin: ##: Siembra el Super Admin en Postgres (uso: make seed-admin EMAIL=... PASS=...)
-	node scripts/crypto-tool.mjs seed-admin $(or $(EMAIL),super_admin@growthshell.com) $(or $(PASS),Admin12345!) | $(COMPOSE_DEV) exec -T postgres psql -U $(POSTGRES_USER) -d gs_control_center
+	node scripts/crypto-tool.mjs seed-admin $(or $(EMAIL),super_admin@growthsell.com) $(or $(PASS),Admin12345!) | $(COMPOSE_DEV) exec -T postgres psql -U $(POSTGRES_USER) -d gs_control_center
 crypto: ##: Utilidad criptográfica (uso: make crypto CMD="generate-key")
 	node scripts/crypto-tool.mjs $(CMD)
 

@@ -41,11 +41,13 @@ import {
   Layers,
   Activity,
   User,
+  UploadCloud,
 } from 'lucide-react';
 import { AdminShell } from '@/components/layout/admin-shell';
 import { SalesView } from '@/components/admin/projects/SalesView';
 import { TransactionsView } from '@/components/admin/projects/TransactionsView';
 import { LeadDetailModal, LeadData } from '@/components/admin/projects/LeadDetailModal';
+import { CsvImporter } from '@/components/csv-importer';
 import { TransactionDetailModal, TransactionData } from '@/components/admin/projects/TransactionDetailModal';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -161,6 +163,9 @@ export default function ProjectDetailsPage() {
 
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
+
+  // CSV Import
+  const [isLeadImportModalOpen, setIsLeadImportModalOpen] = useState(false);
 
   // Modal Profile
   const [selectedLead, setSelectedLead] = useState<LeadData | null>(null);
@@ -483,6 +488,21 @@ export default function ProjectDetailsPage() {
       }
     } catch {
       loadLeads();
+    }
+  };
+
+  const handleImportLeadsCSVDynamic = async (mappedData: any[]) => {
+    try {
+      const res = await fetchWithAuth(`/pipeline/projects/${projectId}/leads/import-csv`, {
+        method: 'POST',
+        body: JSON.stringify(mappedData),
+      });
+      const resData = await res.json();
+      alert(`Importación completada. Exitosos: ${resData.successful}, Fallidos: ${resData.failed}`);
+      loadLeads();
+    } catch (err: any) {
+      alert(`Error importando el CSV: ${err.message || 'Desconocido'}`);
+      throw err;
     }
   };
 
@@ -1193,7 +1213,7 @@ export default function ProjectDetailsPage() {
 
   // Copiar URL de webhook e id
   const copyWebhookUrl = () => {
-    const baseHost = tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthshell.com';
+    const baseHost = tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com';
     const url = `${baseHost}/integrations/hotmart/webhook/${projectId}`;
     navigator.clipboard.writeText(url);
     setCopiedWebhookUrl(true);
@@ -1381,26 +1401,6 @@ export default function ProjectDetailsPage() {
                 /{project.slug}
               </p>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => router.push(effectiveRole === 'CLOSER' ? '/closer/projects' : '/admin/projects')}
-              className="text-xs h-9 border-border"
-            >
-              Lista de Proyectos
-            </Button>
-            <Button
-              variant="gold"
-              size="sm"
-              onClick={() => setIsNewLeadOpen(true)}
-              className="text-xs h-9 font-bold flex items-center gap-1.5 shadow-sm"
-            >
-              <Plus size={14} />
-              <span>Nuevo Lead</span>
-            </Button>
           </div>
         </div>
 
@@ -1750,6 +1750,15 @@ export default function ProjectDetailsPage() {
                 </Select>
 
                 <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsLeadImportModalOpen(true)}
+                  className="text-xs h-9 border-border text-foreground hover:bg-muted"
+                >
+                  <UploadCloud size={13} className="mr-1" />
+                  Importar CSV
+                </Button>
+                <Button
                   variant="gold"
                   size="sm"
                   onClick={() => setIsNewLeadOpen(true)}
@@ -1855,6 +1864,19 @@ export default function ProjectDetailsPage() {
             </div>
           </div>
         )}
+
+        {/* ============================================================= */}
+        {/* MODAL: IMPORTACIÓN CSV DE LEADS                               */}
+        {/* ============================================================= */}
+        <Dialog open={isLeadImportModalOpen} onOpenChange={setIsLeadImportModalOpen}>
+          <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 overflow-hidden">
+            <CsvImporter 
+              mode="leads" 
+              onClose={() => setIsLeadImportModalOpen(false)} 
+              onImport={handleImportLeadsCSVDynamic} 
+            />
+          </DialogContent>
+        </Dialog>
 
         {/* ============================================================= */}
         {/* VISTA 3: MÉTRICAS (DASHBOARD DE VENTAS Y KPIS)                */}
@@ -2366,7 +2388,7 @@ export default function ProjectDetailsPage() {
                     <div className="flex items-center gap-2">
                       <Input
                         readOnly
-                        value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthshell.com')}/integrations/hotmart/webhook/${projectId}`}
+                        value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com')}/integrations/hotmart/webhook/${projectId}`}
                         className="bg-[#0B0D13] font-mono text-[11px] h-8 text-muted-foreground select-all"
                       />
                       <Button
@@ -3450,7 +3472,7 @@ export default function ProjectDetailsPage() {
                 <div className="flex gap-2">
                   <Input
                     readOnly
-                    value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthshell.com')}/integrations/hotmart/webhook/${projectId}`}
+                    value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com')}/integrations/hotmart/webhook/${projectId}`}
                     className="h-9 text-xs font-mono bg-black/50 border-border text-foreground font-semibold select-all"
                   />
                   <Button
@@ -3458,7 +3480,7 @@ export default function ProjectDetailsPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const url = `${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthshell.com')}/integrations/hotmart/webhook/${projectId}`;
+                      const url = `${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com')}/integrations/hotmart/webhook/${projectId}`;
                       navigator.clipboard.writeText(url);
                       setCopiedHotmartUrl(true);
                       setTimeout(() => setCopiedHotmartUrl(false), 2000);

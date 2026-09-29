@@ -3,10 +3,11 @@ import { AuthPublicService } from '../auth';
 import { PrismaService } from '../../core/database';
 import { RedisService } from '../../core/redis';
 import { HotmartAdapter } from '../../infrastructure/providers/hotmart/hotmart.adapter';
-import { RawSale, ManualSaleDto, ProductItem } from '@gs/contracts';
+import { RawSale, ManualSaleDto, ProductItem, CsvLeadImportDto, CsvSaleImportDto } from '@gs/contracts';
 import { ListProjectProductsUseCase } from '../projects';
 import { IntegrationsService } from '../integrations';
 import { EventStatus, Prisma } from '@prisma/client';
+import { withRls } from '../../core/database';
 
 @Injectable()
 export class SalesService implements OnModuleInit {
@@ -262,7 +263,6 @@ export class SalesService implements OnModuleInit {
       // Prioridad 2: El SCK del webhook coincide con el SCK de algún miembro del proyecto (buscando por username, email o UUID).
       // Si no hay ningún closer => Atribución Marketing (venta orgánica desde campaña o sin asignación).
       let closerId: string | null = matchedProduct.ownerCloserId || null;
-      let attribution: 'COMERCIAL' | 'MARKETING' = closerId ? 'COMERCIAL' : 'MARKETING';
 
       if (!closerId && rawSale.sck) {
         try {
@@ -270,11 +270,11 @@ export class SalesService implements OnModuleInit {
           // 2a. Si el SCK parece email, buscar por email
           if (sck.includes('@')) {
             const closerUser = await this.authService.getUserByEmail(sck);
-            if (closerUser) { closerId = closerUser.id; attribution = 'COMERCIAL'; }
+            if (closerUser) { closerId = closerUser.id; }
           // 2b. Si el SCK es UUID de 36 chars, buscar por id
           } else if (sck.length === 36) {
             const closerUser = await this.authService.getUserById(sck);
-            if (closerUser) { closerId = closerUser.id; attribution = 'COMERCIAL'; }
+            if (closerUser) { closerId = closerUser.id; }
           }
           // Nota: SCKs como "closer-1", "marketing" etc. son identificadores externos de Hotmart,
           // no se mapean a usuarios del sistema. El producto ya trae ownerCloserId si aplica.
@@ -289,7 +289,7 @@ export class SalesService implements OnModuleInit {
       const officialCurrency = matchedProduct.currency || 'USD';
       const officialInstallments = matchedProduct.installments || 1;
       // Tipo de venta: CLOSED = cierre de equipo comercial; ORGANIC = marketing / sin closer
-      const saleType: 'CLOSED' | 'ORGANIC' = attribution === 'COMERCIAL' ? 'CLOSED' : 'ORGANIC';
+      // const saleType: 'CLOSED' | 'ORGANIC' = attribution === 'COMERCIAL' ? 'CLOSED' : 'ORGANIC';
       const saleCreatedAt = rawSale.date ? new Date(rawSale.date) : new Date();
 
       await this.prisma.$transaction(async (tx) => {
@@ -320,6 +320,24 @@ export class SalesService implements OnModuleInit {
 
         if (existingSale) {
           // Transacción existente -> actualizar estado
+          const currentMetadata = (existingSale.metadata as Record<string, unknown>) || {};
+          const currentHistory = Array.isArray(currentMetadata.history) ? currentMetadata.history : [];
+          
+          // Agregamos el historial si el estado cambió
+          let newHistory = currentHistory;
+          if (existingSale.status !== rawSale.status || currentHistory.length === 0) {
+            if (currentHistory.length === 0) {
+              newHistory = [this.buildHistoryEvent('STATUS_CHANGE', { status: existingSale.status, timestamp: existingSale.createdAt })];
+            }
+            newHistory = [...newHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status })];
+          }
+
+          const newMetadata = {
+            ...currentMetadata,
+            ...(rawSale.metadata ? (rawSale.metadata as object) : {}),
+            history: newHistory,
+          };
+
           await tx.sale.update({
             where: { id: existingSale.id },
             data: {
@@ -330,7 +348,7 @@ export class SalesService implements OnModuleInit {
               paymentMethod: rawSale.paymentMethod ?? existingSale.paymentMethod,
               offerCode: rawSale.offerCode ?? matchedProduct.offerCode ?? null,
               sck: rawSale.sck ?? matchedProduct.sck ?? null,
-              metadata: (rawSale.metadata ?? {}) as Prisma.InputJsonValue,
+              metadata: newMetadata as Prisma.InputJsonValue,
               updatedAt: new Date(),
             },
             select: {
@@ -342,6 +360,11 @@ export class SalesService implements OnModuleInit {
           );
         } else {
           // Transacción nueva -> crear
+          const initialMetadata = {
+            ...(rawSale.metadata ? (rawSale.metadata as object) : {}),
+            history: [this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt })],
+          };
+
           await tx.sale.create({
             data: {
               projectId: event.projectId,
@@ -359,7 +382,7 @@ export class SalesService implements OnModuleInit {
               offerCode: rawSale.offerCode ?? matchedProduct.offerCode ?? null,
               sck: rawSale.sck ?? matchedProduct.sck ?? null,
               closerId: lead.closerId ?? null,
-              metadata: (rawSale.metadata ?? {}) as Prisma.InputJsonValue,
+              metadata: initialMetadata as Prisma.InputJsonValue,
               createdAt: saleCreatedAt,
             },
             select: {
@@ -409,6 +432,16 @@ export class SalesService implements OnModuleInit {
       default: 
         return 'uncontacted';
     }
+  }
+
+  private buildHistoryEvent(type: 'STATUS_CHANGE' | 'PIPELINE_MOVE', data: { status?: string, stage?: string, authorName?: string, timestamp?: Date }) {
+    return {
+      type,
+      status: data.status,
+      stage: data.stage,
+      authorName: data.authorName || 'Automático',
+      timestamp: (data.timestamp || new Date()).toISOString()
+    };
   }
 
   /**
@@ -613,6 +646,10 @@ export class SalesService implements OnModuleInit {
         }
       });
 
+      const initialMetadata = {
+        history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: dto.date ? new Date(dto.date) : new Date() })],
+      };
+
       const sale = await tx.sale.create({
         data: {
           projectId,
@@ -625,6 +662,7 @@ export class SalesService implements OnModuleInit {
           status: dto.status,
           amount: dto.amount,
           currency: dto.currency,
+          metadata: initialMetadata as Prisma.InputJsonValue,
           ...(dto.date ? { createdAt: new Date(dto.date) } : {})
         },
         select: {
@@ -747,15 +785,143 @@ export class SalesService implements OnModuleInit {
       whereClause.closerId = user.id;
     }
 
-    const lead = await this.prisma.lead.findFirst({ where: whereClause });
+    const lead = await this.prisma.lead.findFirst({ 
+      where: whereClause,
+      include: { sales: true }
+    });
     if (!lead) throw new Error('Lead no encontrado o sin permisos');
 
-    await this.prisma.lead.update({
-      where: { id: lead.id },
-      data: { pipelineStage: stageId, updatedAt: new Date() }
+    // Obtener información del autor
+    let authorName = 'Sistema';
+    if (user) {
+      const actor = await this.authService.getUserById(user.id).catch(() => null);
+      if (actor) authorName = actor.fullName || actor.email;
+    }
+
+    // Nombres de las etapas para el historial (para mayor legibilidad)
+    const stageMap: Record<string, string> = {
+      won: 'Ganado',
+      lost: 'Perdido',
+      recovery: 'Para Recuperación',
+      followup: 'En Seguimiento',
+      uncontacted: 'Sin contactar',
+    };
+    const stageName = stageMap[stageId] || stageId;
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Actualizar estado del lead
+      await tx.lead.update({
+        where: { id: lead.id },
+        data: { pipelineStage: stageId, updatedAt: new Date() }
+      });
+
+      // 2. Inyectar evento de movimiento de pipeline en todas las transacciones asociadas
+      const pipelineEvent = this.buildHistoryEvent('PIPELINE_MOVE', { stage: stageName, authorName });
+
+      for (const sale of lead.sales) {
+        const meta = (sale.metadata as Record<string, unknown>) || {};
+        let currentHistory = Array.isArray(meta.history) ? meta.history : [];
+        if (currentHistory.length === 0) {
+           currentHistory = [this.buildHistoryEvent('STATUS_CHANGE', { status: sale.status, timestamp: sale.createdAt })];
+        }
+
+        await tx.sale.update({
+          where: { id: sale.id },
+          data: {
+            metadata: {
+              ...meta,
+              history: [...currentHistory, pipelineEvent]
+            }
+          }
+        });
+      }
     });
 
     return { success: true };
+  }
+
+  // -------------------------------------------------------------
+  // IMPORTACIÓN MASIVA DESDE CSV
+  // -------------------------------------------------------------
+  
+  async importLeadCsv(projectId: string, dto: CsvLeadImportDto, requestedBy: string) {
+    return withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
+      // Usar upsert para no duplicar correos dentro del mismo proyecto
+      const lead = await tx.lead.upsert({
+        where: {
+          projectId_email: { projectId, email: dto.email }
+        },
+        create: {
+          projectId,
+          email: dto.email,
+          name: dto.name ?? null,
+          phone: dto.phone ?? null,
+          closerId: dto.closerId ?? null,
+          pipelineStage: 'uncontacted', // Columna por defecto según plan
+        },
+        update: {
+          name: dto.name ?? null,
+          phone: dto.phone ?? null,
+          closerId: dto.closerId ?? null,
+          // Mantener pipelineStage existente si ya estaba
+        }
+      });
+      return lead;
+    });
+  }
+
+  async importSaleCsv(projectId: string, dto: CsvSaleImportDto, requestedBy: string) {
+    return withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
+      // 1. Validar que la transacción no exista globalmente o en el proyecto
+      const existingSale = await tx.sale.findFirst({
+        where: {
+          projectId,
+          externalTxnId: dto.externalTxnId,
+        }
+      });
+      
+      if (existingSale) {
+        throw new Error(`La transacción ${dto.externalTxnId} ya existe en el proyecto.`);
+      }
+
+      // 2. Crear o actualizar Lead comprador
+      const lead = await tx.lead.upsert({
+        where: {
+          projectId_email: { projectId, email: dto.leadEmail }
+        },
+        create: {
+          projectId,
+          email: dto.leadEmail,
+          name: dto.leadName ?? null,
+          closerId: dto.closerId ?? null,
+          pipelineStage: 'uncontacted',
+        },
+        update: {
+          name: dto.leadName ?? null,
+          closerId: dto.closerId ?? null,
+        }
+      });
+
+      // 3. Crear Venta
+      const sale = await tx.sale.create({
+        data: {
+          projectId,
+          leadId: lead.id,
+          source: 'CSV_IMPORT',
+          externalOrderId: dto.externalTxnId, // Usamos el mismo como orderId
+          externalTxnId: dto.externalTxnId,
+          productName: dto.productName,
+          status: 'APPROVED',
+          amount: dto.amount,
+          currency: dto.currency,
+          createdAt: dto.date ? new Date(dto.date) : new Date(),
+          closerId: dto.closerId ?? lead.closerId ?? null,
+          metadata: { history: [this.buildHistoryEvent('STATUS_CHANGE', { status: 'APPROVED' })] }
+        }
+      });
+      
+      return sale;
+    });
   }
 }
 

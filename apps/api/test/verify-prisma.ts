@@ -7,7 +7,7 @@ async function main() {
   await prisma.$connect();
 
   console.info('1. Probando inserción y lectura en schema "auth.users"...');
-  const testEmail = `test_${Date.now()}@growthshell.com`;
+  const testEmail = `test_${Date.now()}@growthsell.com`;
   const user = await prisma.user.create({
     data: {
       email: testEmail,

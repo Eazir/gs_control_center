@@ -24,7 +24,7 @@ import {
   ShieldAlert,
   Crown,
 } from 'lucide-react';
-import { GrowthShellHexagon } from '@/components/logo';
+import { GrowthSellHexagon } from '@/components/logo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -45,7 +45,6 @@ export function getNavItemsForRole(role?: string): NavItem[] {
         { title: 'Centro de Mando', href: '/dashboard', icon: LayoutDashboard },
         { title: 'Gestión de Usuarios', href: '/admin/users', icon: Users },
         { title: 'Administración de Proyectos', href: '/admin/projects', icon: FolderKanban },
-        { title: 'Integraciones & Webhooks', href: '/admin/integrations', icon: Radio },
         { title: 'Dashboard de Métricas', href: '/admin/analytics', icon: BarChart3 },
         { title: 'Centro de IA & Telegram', href: '/admin/ai-telegram', icon: Bot },
         { title: 'Auditoría & RLS', href: '/admin/audit', icon: ShieldCheck },
@@ -55,7 +54,6 @@ export function getNavItemsForRole(role?: string): NavItem[] {
         { title: 'Centro de Mando', href: '/dashboard', icon: LayoutDashboard },
         { title: 'Gestión de Usuarios', href: '/admin/users', icon: Users },
         { title: 'Administración de Proyectos', href: '/admin/projects', icon: FolderKanban },
-        { title: 'Integraciones & Webhooks', href: '/admin/integrations', icon: Radio },
         { title: 'Dashboard de Métricas', href: '/admin/analytics', icon: BarChart3 },
         { title: 'Centro de IA & Telegram', href: '/admin/ai-telegram', icon: Bot },
       ];
@@ -73,7 +71,7 @@ export function getNavItemsForRole(role?: string): NavItem[] {
     case 'CLIENTE':
       return [
         { title: 'Centro de Mando', href: '/dashboard', icon: LayoutDashboard },
-        { title: 'Dashboard de Mi Proyecto', href: '/cliente/dashboard', icon: BarChart3 },
+        { title: 'Metricas de mis proyectos', href: '/cliente/metricas', icon: BarChart3 },
       ];
     default:
       return [
@@ -253,7 +251,7 @@ export function AdminShell({ children, title, subtitle: _subtitle }: AdminShellP
       <div className="flex min-h-screen w-full flex-col items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-4">
           <div className="animate-pulse">
-            <GrowthShellHexagon size={48} />
+            <GrowthSellHexagon size={48} />
           </div>
           <div className="flex items-center gap-2 text-xs text-primary font-medium tracking-wider uppercase">
             <span className="h-2 w-2 rounded-full bg-primary animate-ping" />
@@ -268,36 +266,36 @@ export function AdminShell({ children, title, subtitle: _subtitle }: AdminShellP
     switch (role) {
       case 'SUPER_ADMIN':
         return (
-          <Badge variant="gold" className="text-[10px] px-2 py-0.5">
-            <Crown size={10} className="mr-1 text-amber-300" />
+          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-purple-500/30 text-purple-400 bg-purple-500/10">
+            <Crown size={10} className="mr-1 text-purple-400" />
             SUPER ADMIN
           </Badge>
         );
       case 'ADMIN':
         return (
-          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-blue-500/30 text-blue-400 bg-blue-500/10">
-            <ShieldCheck size={10} className="mr-1" />
+          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-amber-500/30 text-amber-400 bg-amber-500/10">
+            <ShieldCheck size={10} className="mr-1 text-amber-400" />
             ADMIN
           </Badge>
         );
       case 'DIRECTOR':
         return (
-          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
-            <FolderKanban size={10} className="mr-1" />
+          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-blue-500/30 text-blue-400 bg-blue-500/10">
+            <FolderKanban size={10} className="mr-1 text-blue-400" />
             DIRECTOR
           </Badge>
         );
       case 'CLOSER':
         return (
-          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-primary/30 text-primary bg-primary/10">
-            <DollarSign size={10} className="mr-1" />
+          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
+            <DollarSign size={10} className="mr-1 text-emerald-400" />
             CLOSER
           </Badge>
         );
       case 'CLIENTE':
         return (
-          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-cyan-500/30 text-cyan-400 bg-cyan-500/10">
-            <Package size={10} className="mr-1" />
+          <Badge variant="outline" className="text-[10px] px-2 py-0.5 border-rose-500/30 text-rose-400 bg-rose-500/10">
+            <Package size={10} className="mr-1 text-rose-400" />
             CLIENTE
           </Badge>
         );
@@ -333,7 +331,7 @@ export function AdminShell({ children, title, subtitle: _subtitle }: AdminShellP
               href="/dashboard"
               className="flex items-center gap-3 transition-transform hover:scale-105"
             >
-              <GrowthShellHexagon size={32} />
+              <GrowthSellHexagon size={32} />
               {isSidebarExpanded && (
                 <div className="flex flex-col leading-none">
                   <span className="text-sm font-bold text-foreground tracking-tight">

@@ -19,7 +19,7 @@
 | **Fase 8** | Modelo Multi-Transacción y Multi-Producto por Lead | **PENDIENTE** |
 | **Fase 9** | Matriz Defensiva de Roles, Permisos y Filtros Avanzados | **PENDIENTE** |
 | **Fase 10** | Paneles de Métricas Comerciales y Liquidación de Comisiones | **PENDIENTE** |
-| **Fase 11** | Rebranding de Marca: "GrowthShell" a "GrowthSell" | **PENDIENTE** |
+| **Fase 11** | Rebranding de Marca: "GrowthSell" a "GrowthSell" | **PENDIENTE** |
 
 ---
 
@@ -189,12 +189,12 @@
 
 ---
 
-## Fase 11: Rebranding de Marca: "GrowthShell" a "GrowthSell"
+## Fase 11: Rebranding de Marca: "GrowthSell" a "GrowthSell"
 **Objetivo:** Corregir y unificar todos los textos y títulos de la plataforma para reflejar el nombre de marca oficial "GrowthSell".
 
-- [ ] Auditoría y reemplazo sistemático en `apps/web`: Títulos de páginas, barra de navegación, menús laterales, diálogos, alertas y copys.
-- [ ] Auditoría y reemplazo en `apps/api`: Mensajes de error amigables, encabezados de logs y correos transaccionales.
-- [ ] Auditoría en documentación pública y manuales de usuario.
+- [x] Auditoría y reemplazo sistemático en `apps/web`: Títulos de páginas, barra de navegación, menús laterales, diálogos, alertas y copys.
+- [x] Auditoría y reemplazo en `apps/api`: Mensajes de error amigables, encabezados de logs y correos transaccionales.
+- [x] Auditoría en documentación pública y manuales de usuario.
 
 ---
 
@@ -209,5 +209,5 @@
 8. Un lead puede tener múltiples transacciones de distintos productos manejadas independientemente.
 9. El rol `CLOSER` únicamente ve sus propios leads y ventas; `ADMIN`/`DIRECTOR` pueden filtrar por closer y ver leads sin asignar.
 10. Paneles de métricas de proyecto, globales y comisiones calculadas con exactitud matemática.
-11. Ningún texto de la interfaz muestra "GrowthShell", todos reflejan "GrowthSell".
+11. Ningún texto de la interfaz muestra "GrowthSell", todos reflejan "GrowthSell".
 12. `pnpm typecheck` pasa sin ningún error TypeScript en todo el monorepo.

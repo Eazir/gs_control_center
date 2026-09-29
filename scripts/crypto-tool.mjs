@@ -2,7 +2,7 @@
 
 /**
  * ==============================================================================
- * GrowthShell Centro de Mando — Utilidad Estándar de Criptografía
+ * GrowthSell Centro de Mando — Utilidad Estándar de Criptografía
  * ==============================================================================
  * 
  * Estándares implementados (alineados con AGENTS.md y OWASP):
@@ -246,7 +246,7 @@ async function main() {
 
   if (!command || command === '--help' || command === '-h') {
     console.log(`
-Uso de crypto-tool (GrowthShell):
+Uso de crypto-tool (GrowthSell):
 ---------------------------------
   node scripts/crypto-tool.mjs generate-key
       Genera una clave aleatoria segura de 32 bytes (64 chars hex) para .env
@@ -334,7 +334,7 @@ Uso de crypto-tool (GrowthShell):
       }
 
       case 'seed-admin': {
-        const email = args[1] || 'admin@growthshell.com';
+        const email = args[1] || 'admin@growthsell.com';
         const pass = args[2] || 'Admin12345!';
         const name = args[3] || 'Super Administrador';
 

@@ -472,31 +472,31 @@ export default function UsersManagementPage() {
     switch (role) {
       case 'SUPER_ADMIN':
         return (
-          <Badge variant="gold" className="text-[10px] font-bold">
+          <Badge className="bg-purple-500/10 text-purple-400 border-purple-500/30 text-[10px]">
             <Sparkles size={10} className="mr-1" /> SUPER ADMIN
           </Badge>
         );
       case 'ADMIN':
         return (
-          <Badge className="bg-purple-950/50 text-purple-300 border-purple-500/30 text-[10px]">
+          <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/30 text-[10px]">
             ADMIN
           </Badge>
         );
       case 'DIRECTOR':
         return (
-          <Badge className="bg-blue-950/50 text-blue-300 border-blue-500/30 text-[10px]">
+          <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/30 text-[10px]">
             DIRECTOR
           </Badge>
         );
       case 'CLOSER':
         return (
-          <Badge className="bg-amber-950/40 text-amber-300 border-amber-500/30 text-[10px]">
+          <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
             CLOSER
           </Badge>
         );
       case 'CLIENTE':
         return (
-          <Badge className="bg-slate-800 text-slate-300 border-slate-700 text-[10px]">
+          <Badge className="bg-rose-500/10 text-rose-400 border-rose-500/30 text-[10px]">
             CLIENTE
           </Badge>
         );
@@ -1269,7 +1269,7 @@ export default function UsersManagementPage() {
                     onChange={(e) => setEditEmail(e.target.value)}
                     disabled={isSubmittingEdit}
                     className="h-10 text-xs font-mono"
-                    placeholder="usuario@growthshell.com"
+                    placeholder="usuario@growthsell.com"
                   />
                   <p className="text-[11px] text-muted-foreground">
                     Modificar el correo cambiará la credencial con la que el usuario inicia sesión.
@@ -1403,7 +1403,7 @@ export default function UsersManagementPage() {
                   <Input
                     id="inviteEmail"
                     type="email"
-                    placeholder="usuario@growthshell.com"
+                    placeholder="usuario@growthsell.com"
                     required
                     value={inviteEmail}
                     onChange={(e) => setInviteEmail(e.target.value)}
@@ -1455,7 +1455,7 @@ export default function UsersManagementPage() {
                   <p className="text-[11px] text-muted-foreground pt-1">
                     {currentUser?.role === 'ADMIN'
                       ? 'Como Administrador, puedes incorporar Directores, Closers y Clientes a la plataforma.'
-                      : 'Define las vistas y permisos del usuario según la jerarquía de GrowthShell.'}
+                      : 'Define las vistas y permisos del usuario según la jerarquía de GrowthSell.'}
                   </p>
                 </div>
               </div>

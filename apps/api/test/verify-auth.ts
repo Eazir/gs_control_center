@@ -22,7 +22,7 @@ async function runAuthVerification() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: 'admin@growthshell.com',
+        email: 'admin@growthsell.com',
         password: 'WrongPassword_123!',
       }),
     });
@@ -35,12 +35,12 @@ async function runAuthVerification() {
     // -------------------------------------------------------------------------
     // 2. Test: Login exitoso de Super Admin
     // -------------------------------------------------------------------------
-    console.info('\n2. Probando login exitoso de Super Admin (admin@growthshell.com)...');
+    console.info('\n2. Probando login exitoso de Super Admin (admin@growthsell.com)...');
     const loginRes = await fetch(`${BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: 'admin@growthshell.com',
+        email: 'admin@growthsell.com',
         password: 'AdminPassword123!',
       }),
     });
@@ -146,7 +146,7 @@ async function runAuthVerification() {
     // 6. Test: Invitación de nuevo usuario (POST /auth/invite)
     // -------------------------------------------------------------------------
     console.info('\n6. Probando invitación de nuevo usuario (POST /auth/invite)...');
-    const inviteEmail = `closer_${Date.now()}@growthshell.com`;
+    const inviteEmail = `closer_${Date.now()}@growthsell.com`;
     const inviteRes = await fetch(`${BASE_URL}/auth/invite`, {
       method: 'POST',
       headers: {

@@ -15,7 +15,7 @@ import {
   X,
   ArrowRight,
 } from 'lucide-react';
-import { GrowthShellHexagon } from '@/components/logo';
+import { GrowthSellHexagon } from '@/components/logo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -125,10 +125,10 @@ function AcceptInviteContent() {
         {/* Logo y Encabezado */}
         <div className="flex flex-col items-center text-center mb-6">
           <div className="mb-5 transition-transform hover:scale-105">
-            <GrowthShellHexagon size={48} />
+            <GrowthSellHexagon size={48} />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Bienvenido a GrowthShell
+            Bienvenido a GrowthSell
           </h1>
           <p className="text-sm text-muted-foreground mt-1.5">
             Establece tu contraseña para activar tu acceso seguro.

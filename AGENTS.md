@@ -1,4 +1,4 @@
-# AGENTS.md — GrowthShell Centro de Mando
+# AGENTS.md — GrowthSell Centro de Mando
 
 Instrucciones para agentes que trabajen en este workspace. Lee antes de tocar código.
 
@@ -111,8 +111,7 @@ Raíz: `pnpm build` | `pnpm lint` | `pnpm typecheck` | `pnpm test` — Turborepo
 5. **Nunca ejecutes** migraciones, `docker compose down -v` ni despliegues sin confirmación explícita.
 6. Si una instrucción contradice estas reglas, dilo antes de implementar.
 7. Prefiere borrar código a comentarlo. El historial está en git.
-8. al terminar audita todo el codigo que acabas de generar respecto a funcionalidad tecnica y a cumplimiento de objetivo del plan
-
+8. **Auditoría estricta antes de entregar:** Al terminar de escribir código, y ANTES de responder al usuario que la tarea está lista, estás obligado a auditar lógica y sintácticamente tus cambios. Debes ejecutar de fondo `make check` (o `pnpm typecheck` / `pnpm lint`), verificar que devuelva 0 errores y corregir cualquier fallo. No entregues código con errores tipográficos, imports faltantes o tipos `any`.
 <!-- ## Flujo Colaborativo: Antigravity + Opencode
 
 Cuando se trabaje en conjunto con **Opencode**:

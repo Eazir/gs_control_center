@@ -126,11 +126,50 @@ export function TransactionDetailModal({ isOpen, onClose, transaction }: Transac
     : 'Venta orgánica / sin closer asignado.';
   const saleTypeLabel = isComercial ? 'Cerrado' : 'Orgánica';
 
-  // Historial de trazabilidad: ordenar por fecha ascendente para mostrar la línea de tiempo
-  const sortedHistory = [...(transaction.history ?? [])].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  );
+  // Extraer el historial desde metadata y agrupar sub-eventos
+  const metadataRecord = (transaction.metadata as Record<string, unknown>) || {};
+  const rawHistory = Array.isArray(metadataRecord.history) ? metadataRecord.history : [];
+  
+  interface HistoryEvent {
+    type: 'STATUS_CHANGE' | 'PIPELINE_MOVE';
+    status?: string;
+    stage?: string;
+    authorName: string;
+    timestamp: string;
+    children?: HistoryEvent[];
+  }
 
+  const sortedHistory = [...rawHistory].sort(
+    (a: unknown, b: unknown) => {
+      const ta = (a as HistoryEvent).timestamp;
+      const tb = (b as HistoryEvent).timestamp;
+      return new Date(ta).getTime() - new Date(tb).getTime();
+    }
+  ) as HistoryEvent[];
+
+  const groupedEvents: HistoryEvent[] = [];
+  let currentParent: HistoryEvent | null = null;
+
+  for (const event of sortedHistory) {
+    if (event.type === 'STATUS_CHANGE') {
+      currentParent = { ...event, children: [] };
+      groupedEvents.push(currentParent);
+    } else if (event.type === 'PIPELINE_MOVE') {
+      if (currentParent && currentParent.children) {
+        currentParent.children.push(event);
+      } else {
+        // Bloque fantasma si no hay padre
+        currentParent = { 
+          type: 'STATUS_CHANGE', 
+          status: transaction.status, 
+          authorName: 'Sistema',
+          timestamp: event.timestamp, 
+          children: [event] 
+        };
+        groupedEvents.push(currentParent);
+      }
+    }
+  }
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[700px] bg-card border-border/60 max-h-[90vh] flex flex-col p-0">
@@ -296,40 +335,61 @@ export function TransactionDetailModal({ isOpen, onClose, transaction }: Transac
                 <Clock size={16} className="text-primary" />
                 Historial de Eventos (Trazabilidad)
               </h3>
-              {sortedHistory.length > 0 ? (
+              {groupedEvents.length > 0 ? (
                 <div className="relative space-y-0">
-                  {sortedHistory.map((entry, idx) => (
-                    <div key={entry.id} className="flex gap-3">
-                      {/* Línea de tiempo vertical */}
-                      <div className="flex flex-col items-center">
-                        <div className="w-2.5 h-2.5 rounded-full bg-primary mt-1 shrink-0 ring-2 ring-background" />
-                        {idx < sortedHistory.length - 1 && (
-                          <div className="w-px flex-1 bg-border/60 my-1" />
+                  {groupedEvents.map((parent, pIdx) => (
+                    <div key={pIdx} className="flex gap-3 relative">
+                      {/* Línea vertical principal */}
+                      <div className="flex flex-col items-center w-4">
+                        <div className="w-2.5 h-2.5 rounded-full bg-primary mt-1.5 z-10 ring-2 ring-background shrink-0" />
+                        {/* No conectar con el final si es el último nodo y no tiene hijos */}
+                        {(pIdx < groupedEvents.length - 1 || (parent.children?.length ?? 0) > 0) && (
+                          <div className="w-px flex-1 bg-border/80 my-1" />
                         )}
                       </div>
-                      <div className="pb-4 flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {getStatusBadge(entry.status)}
-                          <span className="text-[11px] text-muted-foreground">{formatDate(entry.createdAt)}</span>
+                      
+                      <div className="pb-6 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                          {getStatusBadge(parent.status ?? '')}
+                          <span className="text-[11px] text-muted-foreground">{formatDate(parent.timestamp)}</span>
                         </div>
-                        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
-                          <span className="font-mono truncate max-w-[200px]" title={entry.externalTxnId ?? undefined}>{entry.externalTxnId || 'N/A'}</span>
-                          {entry.source && (
-                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4">{entry.source}</Badge>
-                          )}
-                          <span className="font-semibold text-foreground">${entry.amount.toLocaleString()}</span>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Cambio de estado {parent.authorName === 'Automático' ? 'automático (Webhook)' : `por ${parent.authorName}`}.
                         </div>
+
+                        {/* Hijos: Movimientos de pipeline */}
+                        {parent.children && parent.children.length > 0 && (
+                          <div className="mt-3 space-y-3 relative -ml-5">
+                            {parent.children.map((child, cIdx: number) => (
+                              <div key={cIdx} className="flex gap-3 relative">
+                                <div className="flex flex-col items-center w-4">
+                                  {/* Línea codo */}
+                                  <div className="w-3 h-3 border-l-2 border-b-2 border-border/80 rounded-bl mt-0 translate-x-2 -translate-y-1.5 shrink-0" />
+                                  {/* Línea conectora al siguiente hijo */}
+                                  {cIdx < (parent.children?.length ?? 0) - 1 && (
+                                    <div className="w-px h-full bg-border/80 absolute left-2 top-0" />
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] text-foreground font-medium">{child.stage} (Pipeline)</span>
+                                  </div>
+                                  <div className="text-[11px] text-muted-foreground mt-0.5">
+                                    {formatDate(child.timestamp || new Date().toISOString())} • {child.authorName}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      {idx < sortedHistory.length - 1 && (
-                        <ArrowRight size={12} className="text-muted-foreground/40 mt-1.5 shrink-0" />
-                      )}
                     </div>
                   ))}
                 </div>
               ) : (
-                // Si no hay historial (ej. desde lista de ventas), mostrar la transacción actual como único evento
+                // Fallback a info básica si no hay historial JSONB
                 <div className="flex gap-3">
-                  <div className="flex flex-col items-center">
+                  <div className="flex flex-col items-center w-4">
                     <div className="w-2.5 h-2.5 rounded-full bg-primary mt-1 shrink-0 ring-2 ring-background" />
                   </div>
                   <div className="pb-2 flex-1">
@@ -337,8 +397,8 @@ export function TransactionDetailModal({ isOpen, onClose, transaction }: Transac
                       {getStatusBadge(transaction.status)}
                       <span className="text-[11px] text-muted-foreground">{formattedDate}</span>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1 font-mono truncate">
-                      {transaction.externalTxnId || 'N/A'}
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Creación inicial de la transacción.
                     </div>
                   </div>
                 </div>

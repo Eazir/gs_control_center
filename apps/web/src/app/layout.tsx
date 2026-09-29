@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 const spaceGrotesk = Space_Grotesk({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
-  title: 'GrowthShell | Centro de Mando',
+  title: 'GrowthSell | Centro de Mando',
   description: 'Plataforma para operar unidades comerciales de infoproductos',
 };
 

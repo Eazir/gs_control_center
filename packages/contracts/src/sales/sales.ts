@@ -46,6 +46,30 @@ export const ManualSaleSchema = z.object({
 
 export type ManualSaleDto = z.infer<typeof ManualSaleSchema>;
 
+// Esquemas de importación CSV masiva
+export const CsvLeadImportSchema = z.object({
+  name: z.string().optional(),
+  email: z.string().email('Email inválido para importación'),
+  phone: z.string().optional(),
+  closerId: z.string().uuid('UUID inválido').optional(),
+  productOfInterest: z.string().optional(),
+});
+
+export type CsvLeadImportDto = z.infer<typeof CsvLeadImportSchema>;
+
+export const CsvSaleImportSchema = z.object({
+  leadEmail: z.string().email('Email inválido para importación'),
+  leadName: z.string().optional(),
+  productName: z.string().min(1, 'El nombre del producto es requerido'),
+  amount: z.number().min(0, 'El monto debe ser positivo'),
+  currency: z.string().default('USD'),
+  date: z.string().datetime().optional(),
+  externalTxnId: z.string().min(1, 'El código de transacción es requerido'),
+  closerId: z.string().uuid('UUID inválido').optional(),
+});
+
+export type CsvSaleImportDto = z.infer<typeof CsvSaleImportSchema>;
+
 // Interfaz para la lista de ventas y transacciones en frontend
 export interface SaleListItem {
   id: string;

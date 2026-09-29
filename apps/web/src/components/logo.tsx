@@ -7,9 +7,9 @@ interface LogoProps {
 }
 
 /**
- * Emblema hexagonal distintivo de GrowthShell en oro corporativo (#F59E0B).
+ * Emblema hexagonal distintivo de GrowthSell en oro corporativo (#F59E0B).
  */
-export function GrowthShellHexagon({ className, size = 36 }: LogoProps) {
+export function GrowthSellHexagon({ className, size = 36 }: LogoProps) {
   return (
     <svg
       width={size}
@@ -46,16 +46,16 @@ interface BrandHeaderProps {
 }
 
 /**
- * Cabecera de marca con el logotipo y el texto "GrowthShell Centro de Mando".
+ * Cabecera de marca con el logotipo y el texto "GrowthSell Centro de Mando".
  */
-export function GrowthShellBrand({ className, showText = true }: BrandHeaderProps) {
+export function GrowthSellBrand({ className, showText = true }: BrandHeaderProps) {
   return (
     <div className={cn('flex items-center gap-3', className)}>
-      <GrowthShellHexagon size={34} />
+      <GrowthSellHexagon size={34} />
       {showText && (
         <div className="flex flex-col">
           <span className="text-base font-extrabold tracking-tight text-foreground leading-none">
-            GrowthShell
+            GrowthSell
           </span>
           <span className="text-[10px] font-semibold tracking-widest text-primary uppercase mt-1">
             Centro de Mando

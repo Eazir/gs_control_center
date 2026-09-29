@@ -174,8 +174,8 @@ pnpm --filter api lint
 pnpm --filter api dev
 
 # 3. Probar endpoints de Auth con el Super Admin
-# Credenciales predeterminadas: admin@growthshell.com / AdminPassword123!
+# Credenciales predeterminadas: admin@growthsell.com / AdminPassword123!
 curl -X POST http://localhost:3001/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@growthshell.com","password":"AdminPassword123!"}'
+  -d '{"email":"admin@growthsell.com","password":"AdminPassword123!"}'
 ```

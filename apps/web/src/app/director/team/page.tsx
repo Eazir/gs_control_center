@@ -414,7 +414,7 @@ export default function DirectorTeamManagementPage() {
                   Vincular Closer Registrado
                 </CardTitle>
                 <CardDescription className="text-xs text-muted-foreground">
-                  Selecciona a un closer existente en la base de datos de GrowthShell para sumarlo a este proyecto.
+                  Selecciona a un closer existente en la base de datos de GrowthSell para sumarlo a este proyecto.
                 </CardDescription>
               </CardHeader>
 
@@ -510,7 +510,7 @@ export default function DirectorTeamManagementPage() {
                       id="inviteEmail"
                       type="email"
                       required
-                      placeholder="closer@growthshell.com"
+                      placeholder="closer@growthsell.com"
                       value={inviteEmail}
                       onChange={(e) => setInviteEmail(e.target.value)}
                       disabled={isSubmittingInvite}

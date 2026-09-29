@@ -1,4 +1,4 @@
-# Arquitectura General — GrowthShell Centro de Mando (`gs_control_center`)
+# Arquitectura General — GrowthSell Centro de Mando (`gs_control_center`)
 
 > Estado: Fase 1 (Fundación e Identidad) Completada · VPS: Contabo 6 vCPU / 12 GB RAM · PostgreSQL 16 + Redis 7
 
@@ -6,7 +6,7 @@
 
 ## 1. Visión y Enfoque
 
-GrowthShell Centro de Mando es una plataforma web modular diseñada para operar unidades comerciales (equipos de closers) de infoproductos de alto valor.
+GrowthSell Centro de Mando es una plataforma web modular diseñada para operar unidades comerciales (equipos de closers) de infoproductos de alto valor.
 
 Toda decisión arquitectónica se rige por un principio de eficiencia de recursos: operar de manera robusta, escalable y con alta disponibilidad sobre un presupuesto de hardware definido (VPS Contabo de 6 vCPU y 12 GB RAM), garantizando aislamiento de dominios, auditoría inmutable y seguridad por diseño.
 

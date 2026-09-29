@@ -23,6 +23,7 @@ import {
   Target,
   CheckCircle2,
   Briefcase,
+  AlertTriangle,
 } from 'lucide-react';
 import { AdminShell } from '@/components/layout/admin-shell';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -138,6 +139,20 @@ export default function DashboardPage() {
       actionLabel: 'Gestionar Usuarios',
     },
     {
+      id: 'super-admin',
+      title: 'Acciones Avanzadas',
+      description:
+        'Ejecuta acciones destructivas y de mantenimiento en la base de datos que saltan los controles regulares de la aplicación.',
+      icon: AlertTriangle,
+      href: '/admin/super-admin',
+      active: true,
+      badgeText: 'Mantenimiento',
+      badgeVariant: 'destructive' as const,
+      statLabel: 'Acceso Restringido',
+      statValue: 'Super Admin',
+      actionLabel: 'Abrir Módulo',
+    },
+    {
       id: 'projects',
       title: 'Administración de Proyectos',
       description:
@@ -155,25 +170,12 @@ export default function DashboardPage() {
       ),
       actionLabel: 'Gestionar Proyectos',
     },
-    {
-      id: 'integraciones',
-      title: 'Integraciones y Webhooks',
-      description:
-        'Conexión en tiempo real con pasarelas de pago y CRMs: Hotmart, Centralize CRM y GoHighLevel. Registro de eventos de venta e idempotencia estricta.',
-      icon: Radio,
-      href: '/admin/integrations',
-      active: true,
-      badgeText: 'Fase 4',
-      badgeVariant: 'default' as const,
-      statLabel: 'Conectores externos',
-      statValue: '3 Plataformas',
-      actionLabel: 'Configurar Webhooks',
-    },
+
     {
       id: 'analytics',
       title: 'Dashboard de Métricas de Ventas',
       description:
-        'Métricas globales de facturación bruta y neta, ticket promedio y ranking de closers de todos los proyectos con opción de ver el dashboard individual de cada uno.',
+        'Metricas globales de facturacion para todos los proyectos, con acceso a las metricas individuales de cada proyecto.',
       icon: BarChart3,
       href: '/admin/analytics',
       active: true,
@@ -190,7 +192,7 @@ export default function DashboardPage() {
         'Gestión centralizada de API keys de distintas IAs (Claude API, OpenAI) y configuración de códigos/tokens para bots de alertas comerciales en Telegram.',
       icon: Bot,
       href: '/admin/ai-telegram',
-      active: true,
+      active: false,
       badgeText: 'Fase 6',
       badgeVariant: 'default' as const,
       statLabel: 'Asistentes IA vinculados',
@@ -204,7 +206,7 @@ export default function DashboardPage() {
         'Trazabilidad total e inmutable de operaciones, registro histórico de celdas de pipeline, políticas PostgreSQL Row Level Security y sesiones activas.',
       icon: ShieldCheck,
       href: '/admin/audit',
-      active: true,
+      active: false,
       badgeText: 'Fase 7',
       badgeVariant: 'default' as const,
       statLabel: 'Políticas RLS activas',
@@ -231,30 +233,17 @@ export default function DashboardPage() {
       actionLabel: 'Administrar Proyectos',
     },
     {
-      id: 'commissions',
-      title: 'Metas & Comisiones del Proyecto',
+      id: 'analytics',
+      title: 'Dashboard de Métricas de Ventas',
       description:
-        'Supervisión de metas de facturación mensual pactadas, escalones (tiers) de comisión alcanzados y liquidación del equipo.',
-      icon: TrendingUp,
-      href: '/director/commissions',
+        'Metricas globales de facturacion para todos los proyectos, con acceso a las metricas individuales de cada proyecto.',
+      icon: BarChart3,
+      href: '/director/analytics',
       active: true,
       badgeText: 'Fase 5',
-      statLabel: 'Esquema de comisiones',
-      statValue: 'Multivariable',
-      actionLabel: 'Revisar Comisiones',
-    },
-    {
-      id: 'ai',
-      title: 'Asistente Comercial con IA',
-      description:
-        'Herramientas inteligentes para análisis de objeciones en llamadas, sugerencias de scripts tácticos y alertas tempranas.',
-      icon: Bot,
-      href: '/director/ai',
-      active: true,
-      badgeText: 'Fase 6',
-      statLabel: 'Soporte inteligente',
-      statValue: 'Telegram & Claude',
-      actionLabel: 'Consultar Asistente',
+      statLabel: 'Facturación monitoreada',
+      statValue: 'En vivo',
+      actionLabel: 'Ver Métricas de Ventas',
     },
   ];
 
@@ -275,32 +264,6 @@ export default function DashboardPage() {
       statValue: isLoading ? <Skeleton className="h-4 w-16 bg-muted/60 inline-block" /> : 'Activos',
       actionLabel: 'Ver mis Proyectos',
     },
-    {
-      id: 'commissions',
-      title: 'Mis Comisiones Ganadas',
-      description:
-        'Visualiza tus comisiones en tiempo real, tu porcentaje asignado según el escalón de meta cumplido y fechas de cobro.',
-      icon: TrendingUp,
-      href: '/closer/commissions',
-      active: true,
-      badgeText: 'Fase 5',
-      statLabel: 'Comisiones acumuladas',
-      statValue: 'Liquidaciones',
-      actionLabel: 'Ver mis Comisiones',
-    },
-    {
-      id: 'schedule',
-      title: 'Mi Agenda / Llamadas del Día',
-      description:
-        'Consulta tus sesiones de venta agendadas, notas de cualificación previas a la llamada y enlaces directos de reunión.',
-      icon: Calendar,
-      href: '/closer/schedule',
-      active: true,
-      badgeText: 'Fase 3',
-      statLabel: 'Llamadas programadas',
-      statValue: 'Agenda en vivo',
-      actionLabel: 'Abrir Agenda',
-    },
   ];
 
   // -------------------------------------------------------------
@@ -309,16 +272,16 @@ export default function DashboardPage() {
   const clienteCards: FeatureCard[] = [
     {
       id: 'revenue',
-      title: 'Facturación & Rendimiento',
+      title: 'Metricas de mis proyectos',
       description:
         'Visualización consolidada de solo lectura de la facturación bruta y neta, ventas concretadas y ticket promedio de tu infoproducto.',
       icon: DollarSign,
-      href: '/cliente/revenue',
+      href: '/cliente/metricas',
       active: true,
       badgeText: 'Fase 5',
       statLabel: 'Facturación generada',
       statValue: 'Solo Lectura',
-      actionLabel: 'Ver Facturación',
+      actionLabel: '',
     },
     {
       id: 'reports',
@@ -337,7 +300,7 @@ export default function DashboardPage() {
       id: 'products',
       title: 'Catálogo de Infoproductos',
       description:
-        'Consulta las ofertas activas, cursos o mentorías operados actualmente por el equipo comercial de GrowthShell.',
+        'Consulta las ofertas activas, cursos o mentorías operados actualmente por el equipo comercial de GrowthSell.',
       icon: Package,
       href: '/cliente/products',
       active: true,
@@ -351,7 +314,7 @@ export default function DashboardPage() {
   // Determinar tarjetas y textos según el rol activo
   let currentCards: FeatureCard[] = superAdminCards;
   let headerBadge = 'Panel de Control';
-  let headerTitle = 'Centro de Mando GrowthShell';
+  let headerTitle = 'Centro de Mando GrowthSell';
   let headerDesc = 'Gestión integral de unidades comerciales, proyectos, pipelines y trazabilidad de ventas en alta concurrencia.';
 
   if (role === 'DIRECTOR') {
@@ -371,9 +334,9 @@ export default function DashboardPage() {
     headerDesc = 'Visualización consolidada de solo lectura de la facturación y ventas logradas por la unidad comercial de tu proyecto.';
   }
 
-  // ADMIN no debe ver la tarjeta de Auditoría (solo SUPER_ADMIN la administra)
+  // ADMIN no debe ver la tarjeta de Auditoría ni de Super Admin (solo SUPER_ADMIN la administra)
   if (role === 'ADMIN') {
-    currentCards = currentCards.filter((c) => c.id !== 'audit');
+    currentCards = currentCards.filter((c) => c.id !== 'audit' && c.id !== 'super-admin');
   }
 
   return (
@@ -406,23 +369,7 @@ export default function DashboardPage() {
             </Button>
           )}
 
-          {role === 'CLOSER' && (
-            <Button asChild variant="gold" className="font-semibold text-xs h-10 shadow-lg">
-              <Link href="/pipeline">
-                <Kanban size={16} className="mr-2" />
-                Abrir Mi Pipeline
-              </Link>
-            </Button>
-          )}
 
-          {role === 'CLIENTE' && (
-            <Button asChild variant="gold" className="font-semibold text-xs h-10 shadow-lg">
-              <Link href="/cliente/revenue">
-                <DollarSign size={16} className="mr-2" />
-                Ver Facturación
-              </Link>
-            </Button>
-          )}
         </div>
       </div>
 
@@ -569,10 +516,16 @@ export default function DashboardPage() {
                     </div>
 
                     <Badge
-                      variant="gold"
-                      className="text-[10px] px-2.5 py-0.5"
+                      variant="outline"
+                      className={cn(
+                        "text-[10px] px-2.5 py-0.5 flex items-center gap-1.5",
+                        card.active
+                          ? "border-emerald-500/30 text-emerald-500 bg-emerald-500/10"
+                          : "border-slate-500/30 text-slate-500 bg-slate-500/10"
+                      )}
                     >
-                      {card.badgeText}
+                      <span className={cn("w-1.5 h-1.5 rounded-full", card.active ? "bg-emerald-500 animate-pulse" : "bg-slate-500")} />
+                      {card.active ? 'Activo' : 'Inactivo'}
                     </Badge>
                   </div>
 
@@ -591,18 +544,20 @@ export default function DashboardPage() {
                     <span className="font-semibold text-foreground">{card.statValue}</span>
                   </div>
 
-                  <div className="pt-2">
-                    <Button
-                      asChild
-                      variant="gold"
-                      className="w-full text-xs font-bold h-9 justify-between"
-                    >
-                      <Link href={card.href}>
-                        <span>{card.actionLabel}</span>
-                        <ArrowRight size={14} />
-                      </Link>
-                    </Button>
-                  </div>
+                  {card.actionLabel && (
+                    <div className="pt-2">
+                      <Button
+                        asChild
+                        variant="gold"
+                        className="w-full text-xs font-bold h-9 justify-between"
+                      >
+                        <Link href={card.href}>
+                          <span>{card.actionLabel}</span>
+                          <ArrowRight size={14} />
+                        </Link>
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );

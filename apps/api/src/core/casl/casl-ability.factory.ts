@@ -20,7 +20,7 @@ export type AppAbility = MongoAbility<[AppAction, AppSubject]>;
 
 /**
  * Factoría de habilidades de CASL que implementa la matriz de autorización
- * de los 5 roles canónicos de GrowthShell según AGENTS.md:
+ * de los 5 roles canónicos de GrowthSell según AGENTS.md:
  * SUPER_ADMIN > ADMIN > DIRECTOR > CLOSER > CLIENTE
  */
 @Injectable()

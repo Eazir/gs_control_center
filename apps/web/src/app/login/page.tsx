@@ -10,7 +10,7 @@ import {
   CheckCircle2,
   Loader2,
 } from 'lucide-react';
-import { GrowthShellHexagon } from '@/components/logo';
+import { GrowthSellHexagon } from '@/components/logo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -119,7 +119,7 @@ export default function LoginPage() {
             {/* Logo y Encabezado */}
             <div className="flex flex-col items-center text-center mb-8">
               <div className="mb-5 transition-transform hover:scale-105">
-                <GrowthShellHexagon size={48} />
+                <GrowthSellHexagon size={48} />
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-foreground">
                 Iniciar sesión
@@ -170,7 +170,7 @@ export default function LoginPage() {
                     <Input
                       id="email"
                       type="email"
-                      placeholder="admin@growthshell.com"
+                      placeholder="admin@growthsell.com"
                       autoComplete="email"
                       required
                       value={email}

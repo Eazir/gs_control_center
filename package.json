@@ -2,7 +2,7 @@
   "name": "gs_control_center",
   "version": "1.0.0",
   "private": true,
-  "description": "GrowthShell Centro de Mando — Monolito modular con Next.js, NestJS y Turborepo",
+  "description": "GrowthSell Centro de Mando — Monolito modular con Next.js, NestJS y Turborepo",
   "packageManager": "pnpm@12.4.2",
   "scripts": {
     "build": "turbo run build",
