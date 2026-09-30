@@ -5,9 +5,11 @@ import { fetchWithAuth } from '@/lib/api-client';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Search, RefreshCw, Activity, AlertCircle, List } from 'lucide-react';
+import { Search, RefreshCw, Activity, AlertCircle, List, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { TransactionDetailModal } from './TransactionDetailModal';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { CsvImporter } from '@/components/csv-importer';
 
 export interface TransactionsViewProps {
   projectId: string;
@@ -27,6 +29,7 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
   
   const [selectedTxn, setSelectedTxn] = useState<any | null>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   const loadTransactions = async () => {
     if (!projectId) return;
@@ -114,6 +117,13 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="px-3 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-sm rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+          >
+            <Upload size={14} />
+            Importar Transacciones
+          </button>
           <button
             onClick={loadTransactions}
             disabled={isLoading}
@@ -227,6 +237,20 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
           </Table>
         </div>
       </Card>
+      
+      {/* MODAL: IMPORTAR CSV */}
+      <Dialog open={isImportModalOpen} onOpenChange={setIsImportModalOpen}>
+        <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 overflow-hidden">
+          <CsvImporter 
+            projectId={projectId}
+            mode="sales" 
+            onClose={() => {
+              setIsImportModalOpen(false);
+              loadTransactions();
+            }} 
+          />
+        </DialogContent>
+      </Dialog>
 
       <TransactionDetailModal 
         isOpen={!!selectedTxn}

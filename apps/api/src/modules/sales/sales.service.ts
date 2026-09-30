@@ -738,7 +738,8 @@ export class SalesService implements OnModuleInit {
       include: {
         sales: {
           orderBy: { createdAt: 'desc' },
-        }
+        },
+        interestedProducts: true,
       },
       orderBy: { updatedAt: 'desc' },
     });
@@ -756,6 +757,36 @@ export class SalesService implements OnModuleInit {
       const hasCloser = !!(representativeSale?.closerId || lead.closerId);
       const attribution = hasCloser ? 'COMERCIAL' : 'MARKETING';
 
+      // Productos de interés (formato string separado por comas o primer producto)
+      let firstProductName = 'N/A';
+      if (representativeSale?.productName) {
+        firstProductName = representativeSale.productName;
+      } else if (lead.interestedProducts.length > 0) {
+        firstProductName = 'Interesado en Producto(s)'; // Se ajusta visualmente en el frontend si hace falta
+      }
+
+      // Agrupar historial por externalOrderId para evitar transacciones repetidas en frontend
+      const historyByOrder = new Map<string, Record<string, unknown>[]>();
+      lead.sales.forEach(s => {
+        const orderId = s.externalOrderId || s.externalTxnId;
+        if (!historyByOrder.has(orderId)) {
+          historyByOrder.set(orderId, []);
+        }
+        historyByOrder.get(orderId)!.push({
+          id: s.id,
+          status: s.status,
+          externalTxnId: s.externalTxnId,
+          productName: s.productName,
+          amount: Number(s.amount),
+          createdAt: s.createdAt.toISOString(),
+          updatedAt: s.updatedAt.toISOString(),
+          source: s.source,
+          sck: s.sck,
+          pipelineStage: s.pipelineStage,
+          pipelineSubstatus: s.pipelineSubstatus
+        });
+      });
+
       return {
         id: lead.id,
         fullName: lead.name || 'Sin Nombre',
@@ -764,13 +795,13 @@ export class SalesService implements OnModuleInit {
         stageId: lead.pipelineStage || 'uncontacted',
         lastContact: lead.updatedAt.toISOString(),
         estimatedValue,
-        productName: representativeSale?.productName || 'N/A',
+        productName: representativeSale?.productName || firstProductName,
         closerId: representativeSale?.closerId || lead.closerId || undefined,
-        // closerName se resuelve en el frontend usando la lista de miembros del proyecto
         source: representativeSale?.source || 'MANUAL',
         installments: representativeSale?.installments || 1,
         offerCode: representativeSale?.offerCode || undefined,
         attribution,
+        interestedProducts: lead.interestedProducts.map(ip => ip.productId),
         latestTransaction: representativeSale ? {
           id: representativeSale.id,
           status: representativeSale.status,
@@ -795,19 +826,10 @@ export class SalesService implements OnModuleInit {
             email: lead.email,
             phone: lead.phone
           },
-          // Historial de todas las transacciones del lead para trazabilidad
-          history: lead.sales.map(s => ({
-            id: s.id,
-            status: s.status,
-            externalTxnId: s.externalTxnId,
-            productName: s.productName,
-            amount: Number(s.amount),
-            createdAt: s.createdAt.toISOString(),
-            updatedAt: s.updatedAt.toISOString(),
-            source: s.source,
-            sck: s.sck,
-            pipelineStage: s.pipelineStage,
-            pipelineSubstatus: s.pipelineSubstatus
+          // Pasamos el history agrupado
+          history: Array.from(historyByOrder.entries()).map(([orderId, txns]) => ({
+            orderId,
+            transactions: txns
           }))
         } : null
       };
@@ -896,9 +918,36 @@ export class SalesService implements OnModuleInit {
     if (data.phone !== undefined) updateData.phone = data.phone;
     if (data.closerId !== undefined) updateData.closerId = data.closerId;
 
-    await this.prisma.lead.update({
-      where: { id: lead.id },
-      data: updateData
+    await this.prisma.$transaction(async (tx) => {
+      if (Object.keys(updateData).length > 0) {
+        await tx.lead.update({
+          where: { id: lead.id },
+          data: updateData
+        });
+      }
+
+      if (data.productOfInterest) {
+        try {
+          const project = await tx.project.findUnique({ where: { id: projectId }, select: { products: true }});
+          const products = (project?.products as Array<{ id: string; name: string }>) || [];
+          const matchedProd = products.find(p => p.name.toLowerCase().includes(data.productOfInterest!.toLowerCase()));
+          const logicalId = matchedProd ? matchedProd.id : data.productOfInterest;
+
+          await tx.leadInterestedProduct.upsert({
+            where: {
+              leadId_productId: { leadId: lead.id, productId: logicalId }
+            },
+            create: {
+              leadId: lead.id,
+              productId: logicalId,
+              note: 'Asignado manualmente',
+            },
+            update: {}
+          });
+        } catch {
+          // Ignorar silenciosamente si hay error al vincular el producto
+        }
+      }
     });
 
     return { success: true };
@@ -973,6 +1022,45 @@ export class SalesService implements OnModuleInit {
   // -------------------------------------------------------------
   
   async importLeadCsv(projectId: string, dto: CsvLeadImportDto, requestedBy: string) {
+    // ── Resolución de closerId y configuraciones cross-schema ──
+    let closerId: string | null = null;
+
+    if (dto.sck) {
+      const closerUser = await this.prisma.projectUser.findFirst({
+        where: { projectId, sckCodes: { has: dto.sck.trim() } },
+      });
+      if (closerUser) closerId = closerUser.userId;
+    }
+
+    if (!closerId && dto.closerId) {
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(dto.closerId) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dto.closerId);
+      if (isUUID) {
+        // UUID directo: verificar que sea miembro del proyecto
+        const isMember = await this.prisma.projectUser.findFirst({
+          where: { projectId, userId: dto.closerId },
+        });
+        if (isMember) closerId = dto.closerId;
+      } else if (dto.closerId.includes('@')) {
+        const u = await this.authService.getUserByEmail(dto.closerId).catch(() => null);
+        if (u) closerId = u.id;
+      }
+    }
+
+    // ── Determinar etapa del pipeline ──
+    let defaultStage = 'uncontacted';
+    if (dto.pipelineStage) {
+      defaultStage = dto.pipelineStage;
+    } else {
+      const project = await this.prisma.project.findUnique({
+        where: { id: projectId },
+        select: { settings: true },
+      });
+      const settings = project?.settings as { pipelineStages?: { id: string }[] } | null;
+      if (settings?.pipelineStages?.[0]?.id) {
+        defaultStage = settings.pipelineStages[0].id;
+      }
+    }
+
     return withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
       let lead = null;
       if (dto.phone) {
@@ -982,25 +1070,13 @@ export class SalesService implements OnModuleInit {
         lead = await tx.lead.findFirst({ where: { projectId, email: dto.email } });
       }
 
-      let closerId: string | null = null;
-      if (dto.closerId) {
-        if (dto.closerId.includes('@')) {
-          const u = await this.authService.getUserByEmail(dto.closerId).catch(()=>null);
-          if (u) closerId = u.id;
-        } else if (dto.closerId.length === 36) {
-          const u = await this.authService.getUserById(dto.closerId).catch(()=>null);
-          if (u) closerId = u.id;
-        } else {
-          // Intentar buscar por nombre (si es necesario) o simplemente descartar
-        }
-      }
-
       if (lead) {
         const updateData: Prisma.LeadUpdateInput = { updatedAt: new Date() };
         if (!lead.name && dto.name) updateData.name = dto.name;
         if (!lead.email && dto.email) updateData.email = dto.email;
         if (!lead.phone && dto.phone) updateData.phone = dto.phone;
         if (closerId) updateData.closerId = closerId;
+        if (dto.pipelineStage) updateData.pipelineStage = dto.pipelineStage;
         
         lead = await tx.lead.update({
           where: { id: lead.id },
@@ -1014,35 +1090,64 @@ export class SalesService implements OnModuleInit {
             name: dto.name ?? null,
             phone: dto.phone ?? null,
             closerId: closerId ?? null,
-            pipelineStage: 'uncontacted',
+            pipelineStage: defaultStage,
           }
         });
       }
+
+      // ── Mapear Producto de Interés (si viene en el CSV) ────────────────
+      if (dto.productOfInterest) {
+        try {
+          // Buscamos el producto en el JSON de configuracion del proyecto
+          const project = await tx.project.findUnique({ where: { id: projectId }, select: { products: true }});
+          const products = (project?.products as Array<{ id: string; name: string }>) || [];
+          const matchedProd = products.find(p => p.name.toLowerCase().includes(dto.productOfInterest!.toLowerCase()));
+          
+          // Usamos el ID si se encuentra, si no usamos el nombre directamente como ID lógico temporal
+          const logicalId = matchedProd ? matchedProd.id : dto.productOfInterest;
+
+          await tx.leadInterestedProduct.upsert({
+            where: {
+              leadId_productId: { leadId: lead.id, productId: logicalId }
+            },
+            create: {
+              leadId: lead.id,
+              productId: logicalId,
+              note: 'Importado vía CSV',
+            },
+            update: {} // Si ya existe, no hace nada
+          });
+        } catch {
+          // Fallback silencioso si no se encuentra el producto o hay error
+        }
+      }
+
       return lead;
     });
   }
 
   async importSaleCsv(projectId: string, dto: CsvSaleImportDto, requestedBy: string) {
     return withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
-      // 1. Validar unicidad (ya sea como Txn o como OrderId)
+      // 1. Validar unicidad por ID de transacción
       const existingSale = await tx.sale.findFirst({
         where: { projectId, externalTxnId: dto.externalTxnId }
       });
       if (existingSale) throw new Error(`La transacción ${dto.externalTxnId} ya existe.`);
 
-      // Resolver closerId desde el SCK si viene, o asume Marketing (null) si no hay SCK
+      // ── Resolución de closerId ──────────────────────────────────
       let closerId: string | null = null;
       if (dto.sck) {
-        if (dto.sck.includes('@')) {
-          const u = await this.authService.getUserByEmail(dto.sck).catch(()=>null);
-          if (u) closerId = u.id;
-        } else if (dto.sck.length === 36) {
-          const u = await this.authService.getUserById(dto.sck).catch(()=>null);
-          if (u) closerId = u.id;
+        try {
+          const closerUser = await tx.projectUser.findFirst({
+            where: { projectId, sckCodes: { has: dto.sck.trim() } },
+          });
+          if (closerUser) closerId = closerUser.userId;
+        } catch {
+          // Ignorar si el SCK no resuelve
         }
       }
 
-      // 2. Determinar etapa en pipeline
+      // 2. Determinar etapa en pipeline para esta transacción
       const pipelineStage = this.determineStage(dto.status);
       const pipelineSubstatus = this.determineSubstatus(dto.status);
 
@@ -1060,6 +1165,8 @@ export class SalesService implements OnModuleInit {
         if (!lead.name && dto.leadName) updateData.name = dto.leadName;
         if (!lead.email && dto.leadEmail) updateData.email = dto.leadEmail;
         if (!lead.phone && dto.leadPhone) updateData.phone = dto.leadPhone;
+        // Solo actualizar el pipeline stage del lead si la nueva transacción
+        // representa un avance o cambio relevante (por simplicidad, lo sobreescribimos)
         updateData.pipelineStage = pipelineStage;
         if (closerId && !lead.closerId) updateData.closerId = closerId;
         
@@ -1080,13 +1187,14 @@ export class SalesService implements OnModuleInit {
       // 4. Crear Venta
       const parsedDate = dto.date ? new Date(dto.date) : new Date();
       const saleDate = isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+      const orderId = dto.externalOrderId || dto.externalTxnId;
 
       const sale = await tx.sale.create({
         data: {
           projectId,
           leadId: lead.id,
           source: 'CSV_IMPORT',
-          externalOrderId: dto.externalTxnId, 
+          externalOrderId: orderId, 
           externalTxnId: dto.externalTxnId,
           productName: dto.productName || 'Importado CSV',
           status: dto.status,

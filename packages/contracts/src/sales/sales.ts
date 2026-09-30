@@ -51,8 +51,10 @@ export const CsvLeadImportSchema = z.object({
   name: z.string().optional(),
   email: z.string().email('Email inválido para importación').optional().nullable(),
   phone: z.string().min(1, 'El teléfono es obligatorio'),
-  closerId: z.string().optional().nullable(), // Allow generic string (email, name, or id) to be resolved by backend
+  closerId: z.string().optional().nullable(), // UUID directo del closer (asignación manual/equitativa)
+  sck: z.string().optional().nullable(), // Código SCK para resolver closer vía projectUser.sckCodes
   productOfInterest: z.string().optional(),
+  pipelineStage: z.string().optional().nullable(), // Estado del lead (opcional): uncontacted, followup, etc.
 });
 
 export type CsvLeadImportDto = z.infer<typeof CsvLeadImportSchema>;
@@ -69,6 +71,7 @@ export const CsvSaleImportSchema = z.object({
   installments: z.coerce.number().default(1),
   isFirstInstallment: z.boolean().default(true),
   externalTxnId: z.string().min(1, 'El código de transacción es requerido'),
+  externalOrderId: z.string().optional(), // ID de la orden (para agrupar transacciones de la misma compra)
   productName: z.string().optional(),
   amount: z.coerce.number().default(0),
   currency: z.string().default('USD'),
@@ -114,6 +117,7 @@ export const UpdateLeadSchema = z.object({
   phone: z.string().nullable().optional(),
   email: z.string().email().optional(),
   closerId: z.string().uuid().nullable().optional(),
+  productOfInterest: z.string().nullable().optional(),
 });
 
 export type UpdateLeadDto = z.infer<typeof UpdateLeadSchema>;

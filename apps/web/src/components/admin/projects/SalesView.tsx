@@ -24,7 +24,6 @@ import {
 import { SaleListItem, ProductItem } from '@gs/contracts';
 import { Badge } from '@/components/ui/badge';
 import { TransactionDetailModal } from './TransactionDetailModal';
-import { CsvImporter } from '@/components/csv-importer';
 
 export interface SalesViewMember {
   id: string;
@@ -119,7 +118,6 @@ export function SalesView({
 
   // Modales
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -537,14 +535,6 @@ export function SalesView({
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            className="border-border hover:bg-muted text-foreground"
-            onClick={() => setIsImportModalOpen(true)}
-          >
-            <Upload className="w-4 h-4 mr-2" />
-            Importar CSV
-          </Button>
           <Button
             className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium shadow-sm"
             onClick={handleOpenManualModal}
@@ -1062,23 +1052,7 @@ export function SalesView({
         </DialogContent>
       </Dialog>
 
-      {/* ========================================================================= */}
-      {/* MODAL: IMPORTAR CSV                                                       */}
-      {/* ========================================================================= */}
-      {/* MODAL IMPORTACION (WIZARD) */}
-      {/* ========================================================================= */}
-      <Dialog open={isImportModalOpen} onOpenChange={setIsImportModalOpen}>
-        <DialogContent className="bg-background border-border text-foreground max-w-4xl">
-          <CsvImporter 
-            projectId={projectId}
-            mode="sales" 
-            onClose={() => {
-              setIsImportModalOpen(false);
-              loadSales();
-            }} 
-          />
-        </DialogContent>
-      </Dialog>
+
 
       <TransactionDetailModal 
         isOpen={!!selectedTxn}

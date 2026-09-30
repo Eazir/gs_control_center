@@ -38,6 +38,7 @@ import {
   Lock,
   ChevronRight,
   UserCheck,
+  Tag,
   Layers,
   Activity,
   User,
@@ -107,6 +108,7 @@ interface ProjectMember {
   userEmail?: string | null;
   userRole?: string | null;
   userPhone?: string | null;
+  sckCodes?: string[];
 }
 
 interface PipelineStageConfig {
@@ -167,6 +169,10 @@ export default function ProjectDetailsPage() {
 
   // CSV Import
   const [isLeadImportModalOpen, setIsLeadImportModalOpen] = useState(false);
+
+  // Modal SCK para Closers
+  const [editingSckUser, setEditingSckUser] = useState<{ userId: string; name: string; codes: string } | null>(null);
+  const [isSavingSck, setIsSavingSck] = useState(false);
 
   // Modal Profile
   const [selectedLead, setSelectedLead] = useState<LeadData | null>(null);
@@ -529,9 +535,9 @@ export default function ProjectDetailsPage() {
     
     // Impactar en backend
     try {
-      const res = await fetchWithAuth(`/sales/project/${projectId}/transactions/${leadId}`, {
+      const res = await fetchWithAuth(`/sales/project/${projectId}/leads/${leadId}/stage`, {
         method: 'POST',
-        body: JSON.stringify({ pipelineStage: targetStageId }),
+        body: JSON.stringify({ stageId: targetStageId }),
       });
       if (!res.ok) {
         // Revertir en caso de error
@@ -1187,6 +1193,28 @@ export default function ProjectDetailsPage() {
       setMemberError(err instanceof Error ? err.message : 'Error al asignar miembro');
     } finally {
       setIsAssigningMember(false);
+    }
+  };
+
+  const handleSaveSckCodes = async () => {
+    if (!editingSckUser || !projectId) return;
+    setIsSavingSck(true);
+    try {
+      const newCodes = editingSckUser.codes.split(',').map(s => s.trim()).filter(Boolean);
+      const res = await fetchWithAuth(`/projects/${projectId}/members/${editingSckUser.userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sckCodes: newCodes })
+      });
+      
+      if (!res.ok) throw new Error('Error al guardar SCK');
+      
+      setMembers((prev) => prev.map(m => m.userId === editingSckUser.userId ? { ...m, sckCodes: newCodes } : m));
+      setEditingSckUser(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error inesperado');
+    } finally {
+      setIsSavingSck(false);
     }
   };
 
@@ -2310,7 +2338,18 @@ export default function ProjectDetailsPage() {
                                 {m.roleInProject}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right py-2.5">
+                            <TableCell className="text-right py-2.5 space-x-2">
+                              {m.roleInProject === 'CLOSER' && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setEditingSckUser({ userId: m.userId, name: m.userName || 'Closer', codes: m.sckCodes?.join(', ') || '' })}
+                                  className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                                  title="Editar SCK"
+                                >
+                                  <Tag size={13} />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -2715,7 +2754,6 @@ export default function ProjectDetailsPage() {
                         <TableRow className="border-border/60">
                           <TableHead className="text-[11px] font-bold">Nombre del Producto</TableHead>
                           <TableHead className="text-[11px] font-bold">Oferta</TableHead>
-                          <TableHead className="text-[11px] font-bold">SCK</TableHead>
                           <TableHead className="text-[11px] font-bold text-right">Precio</TableHead>
                           <TableHead className="text-[11px] font-bold text-center">Cuotas</TableHead>
                           <TableHead className="text-[11px] font-bold text-center">Estado</TableHead>
@@ -2725,7 +2763,7 @@ export default function ProjectDetailsPage() {
                       <TableBody>
                         {products.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={isAdminOrSuper ? 7 : 6} className="text-center py-6 text-xs text-muted-foreground">
+                            <TableCell colSpan={isAdminOrSuper ? 6 : 5} className="text-center py-6 text-xs text-muted-foreground">
                               No hay productos en el catálogo aún.
                             </TableCell>
                           </TableRow>
@@ -3682,6 +3720,32 @@ export default function ProjectDetailsPage() {
                   <Save size={13} />
                 )}
                 <span>{hotmartSavedSuccess ? '¡Guardado!' : 'Guardar Configuración'}</span>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!editingSckUser} onOpenChange={(o) => !o && setEditingSckUser(null)}>
+          <DialogContent className="bg-card border-border sm:max-w-[400px]">
+            <DialogHeader>
+              <DialogTitle className="text-sm">Códigos SCK - {editingSckUser?.name}</DialogTitle>
+              <DialogDescription className="text-xs">
+                Asigna códigos SCK (separados por coma) para atribuir ventas a este Closer.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <Label className="text-xs text-muted-foreground">Códigos SCK</Label>
+              <Input 
+                value={editingSckUser?.codes || ''} 
+                onChange={(e) => setEditingSckUser(prev => prev ? { ...prev, codes: e.target.value } : null)}
+                placeholder="Ej: sck1, sck2, promo_pedro"
+                className="bg-[#0B0D13] border-border text-xs mt-1"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={() => setEditingSckUser(null)}>Cancelar</Button>
+              <Button variant="gold" size="sm" onClick={handleSaveSckCodes} disabled={isSavingSck}>
+                {isSavingSck ? <RotateCw size={13} className="animate-spin" /> : 'Guardar'}
               </Button>
             </DialogFooter>
           </DialogContent>

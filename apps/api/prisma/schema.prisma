@@ -258,6 +258,7 @@ model Lead {
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
 
   sales           Sale[]
+  interestedProducts LeadInterestedProduct[]
 
   @@unique([projectId, email]) // Un lead es único por correo electrónico en un proyecto
   @@index([projectId, closerId])
@@ -309,5 +310,20 @@ model Sale {
   @@index([projectId, status])
   @@index([projectId, closerId])
   @@map("sales")
+  @@schema("sales")
+}
+
+model LeadInterestedProduct {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId    String   @map("lead_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  note      String?  
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  lead      Lead     @relation(fields: [leadId], references: [id])
+  // NOTA: Para no forzar FK cross-schema con ProjectProduct, productId queda solo lógico.
+
+  @@unique([leadId, productId])
+  @@map("lead_interested_products")
   @@schema("sales")
 }

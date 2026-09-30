@@ -19,8 +19,8 @@ import {
 import { fetchWithAuth } from '@/lib/api-client';
 
 export interface LeadData {
-  id: string; // This is the transaction ID OR lead ID depending on the view
-  leadId?: string; // This is the Lead ID if id is transaction ID
+  id: string; 
+  leadId?: string; 
   fullName: string;
   email: string;
   phone: string;
@@ -32,7 +32,8 @@ export interface LeadData {
   source: string;
   createdAt: string;
   pipelineSubstatus?: string;
-  history?: any[]; // History of transactions
+  interestedProducts?: string[]; // Nueva data de productos de interes
+  history?: { orderId: string; transactions: any[] }[]; // Historial agrupado
 }
 
 export interface LeadDetailProps {
@@ -56,6 +57,7 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [closerId, setCloserId] = useState<string | undefined>(undefined);
+  const [productOfInterest, setProductOfInterest] = useState('');
 
   // Form State - Transaction
   const [txnStatus, setTxnStatus] = useState('');
@@ -68,6 +70,7 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
       setEmail(lead.email || '');
       setPhone(lead.phone || '');
       setCloserId(lead.closerId || 'unassigned');
+      setProductOfInterest('');
       
       setTxnStatus('');
       setTxnStage('');
@@ -80,8 +83,6 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
   if (!lead) return null;
 
   const handleSaveContact = async () => {
-    // If we have lead.leadId, use that (we are in Kanban where lead.id is Txn ID)
-    // If we don't have lead.leadId, it means lead.id IS the Lead ID (we are in Table)
     const targetLeadId = lead.leadId || lead.id;
     if (!projectId || !targetLeadId) return;
     
@@ -94,6 +95,7 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
           email,
           phone,
           closerId: closerId === 'unassigned' ? null : closerId,
+          productOfInterest: productOfInterest.trim() || undefined,
         }),
       });
       if (res.ok) {
@@ -126,16 +128,8 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
     }
   };
 
-  // Build the list of transactions to display
-  const transactions = lead.history && lead.history.length > 0 ? lead.history : [{
-    id: lead.id, // For Kanban, lead.id is the transaction id
-    productName: lead.productName,
-    amount: lead.estimatedValue,
-    source: lead.source,
-    createdAt: lead.createdAt,
-    status: '', // Not strictly available at the top level of Kanban lead mapping right now without digging, but ok for fallback
-    pipelineSubstatus: lead.pipelineSubstatus,
-  }];
+  const orders = lead.history && lead.history.length > 0 ? lead.history : [];
+  const interestedProducts = lead.interestedProducts || [];
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -179,6 +173,10 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Teléfono</Label>
                     <Input value={phone} onChange={e => setPhone(e.target.value)} className="h-8 text-xs bg-card" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Producto de Interés a agregar</Label>
+                    <Input value={productOfInterest} onChange={e => setProductOfInterest(e.target.value)} placeholder="Nombre del producto" className="h-8 text-xs bg-card" />
                   </div>
                   {activeClosers && (
                     <div className="space-y-1">
@@ -242,149 +240,182 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
             </div>
           </div>
 
+          {/* PRODUCTOS DE INTERÉS */}
+          {interestedProducts.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Tag size={16} className="text-primary" />
+                Productos de Interés
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {interestedProducts.map((p, i) => (
+                  <Badge key={i} variant="secondary" className="bg-primary/20 text-primary border border-primary/30">
+                    <Package size={10} className="mr-1" /> {p}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* DATOS DE NEGOCIO / TRANSACCIONES */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <Tag size={16} className="text-primary" />
-                Historial de Transacciones ({transactions.length})
+                Historial de Compras ({orders.length})
               </h3>
             </div>
 
-            <div className="space-y-3">
-              {transactions.map((txn, index) => {
-                const isEditing = editingTxnId === txn.id;
+            <div className="space-y-4">
+              {orders.length === 0 ? (
+                <div className="bg-muted/30 p-4 rounded-xl border border-border/60 text-sm text-center text-muted-foreground">
+                  No hay transacciones registradas.
+                </div>
+              ) : orders.map((order, index) => {
+                const totalAmount = order.transactions.reduce((acc, t) => acc + Number(t.amount || 0), 0);
+                const mainProduct = order.transactions[0]?.productName || 'Desconocido';
                 
                 return (
-                  <div key={txn.id || index} className="bg-muted/30 p-4 rounded-xl border border-border/60 space-y-3 text-sm">
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-1.5 font-medium text-foreground">
-                        <Package size={14} className="text-primary" />
-                        <span className="truncate max-w-[180px]" title={txn.productName}>
-                          {txn.productName || 'N/A'}
-                        </span>
-                      </div>
-                      {!isEditing && (
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => {
-                            setTxnStatus(txn.status || '');
-                            setTxnSubstatus(txn.pipelineSubstatus || '');
-                            setEditingTxnId(txn.id);
-                          }} 
-                          className="h-6 text-xs text-muted-foreground hover:text-primary px-2"
-                        >
-                          <Pencil size={12} className="mr-1" /> Editar Estado
-                        </Button>
-                      )}
-                    </div>
-
-                    <div className="flex justify-between items-center mt-2">
-                      <span className="text-muted-foreground">Valor Estimado:</span>
-                      <span className="font-mono text-primary font-bold">
-                        ${Number(txn.amount || 0).toLocaleString()} USD
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between items-center mt-1">
-                      <span className="text-muted-foreground">Estado del Lead:</span>
-                      <Badge variant="outline" className="text-[10px] text-foreground">
-                        {txn.pipelineSubstatus || 'SIN ESTADO'}
-                      </Badge>
-                    </div>
-
-                    <div className="flex justify-between items-center mt-1">
-                      <span className="text-muted-foreground">Origen:</span>
-                      <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary">
-                        {txn.source || lead.source}
-                      </Badge>
-                    </div>
-
-                    {isEditing ? (
-                      <div className="pt-3 mt-3 border-t border-border/40 space-y-3">
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Nuevo Estado de Pasarela</Label>
-                          <Select value={txnStatus} onValueChange={setTxnStatus}>
-                            <SelectTrigger className="h-8 text-xs bg-card">
-                              <SelectValue placeholder="Seleccionar estado" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="APPROVED">APPROVED (Aprobado)</SelectItem>
-                              <SelectItem value="COMPLETED">COMPLETED (Completado)</SelectItem>
-                              <SelectItem value="PENDING">PENDING (Pendiente)</SelectItem>
-                              <SelectItem value="CANCELED">CANCELED (Cancelado)</SelectItem>
-                              <SelectItem value="REFUNDED">REFUNDED (Reembolsado)</SelectItem>
-                              <SelectItem value="CHARGEBACK">CHARGEBACK (Contracargo)</SelectItem>
-                              <SelectItem value="ABANDONED_CART">ABANDONED_CART (Carrito Abandonado)</SelectItem>
-                              <SelectItem value="EXPIRED">EXPIRED (Expirado)</SelectItem>
-                            </SelectContent>
-                          </Select>
+                  <div key={order.orderId || index} className="bg-muted/20 rounded-xl border border-border/60 overflow-hidden">
+                    <div className="bg-muted/40 px-4 py-3 flex justify-between items-center border-b border-border/60">
+                      <div>
+                        <div className="text-sm font-medium flex items-center gap-1.5">
+                          <Package size={14} className="text-primary" />
+                          <span className="truncate max-w-[200px]" title={mainProduct}>{mainProduct}</span>
                         </div>
-                        {pipelineStages && (
-                          <div className="space-y-1">
-                            <Label className="text-xs text-muted-foreground">Nueva Etapa en Pipeline (opcional)</Label>
-                            <Select value={txnStage} onValueChange={setTxnStage}>
-                              <SelectTrigger className="h-8 text-xs bg-card">
-                                <SelectValue placeholder="No cambiar etapa" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="NO_CHANGE">No cambiar etapa</SelectItem>
-                                {pipelineStages.map(s => (
-                                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        )}
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Nuevo Estado del Lead (opcional)</Label>
-                          <Select value={txnSubstatus} onValueChange={setTxnSubstatus}>
-                            <SelectTrigger className="h-8 text-xs bg-card">
-                              <SelectValue placeholder="No cambiar estado" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="NO_CHANGE">No cambiar estado</SelectItem>
-                              <SelectItem value="POR PAGAR">POR PAGAR</SelectItem>
-                              <SelectItem value="SEGUIMIENTO">SEGUIMIENTO</SelectItem>
-                              <SelectItem value="NO RESPONDE">NO RESPONDE</SelectItem>
-                              <SelectItem value="NO CALIFICA">NO CALIFICA</SelectItem>
-                              <SelectItem value="YA HABIA ENTRADO">YA HABIA ENTRADO</SelectItem>
-                              <SelectItem value="PAGO COMPLETO">PAGO COMPLETO</SelectItem>
-                              <SelectItem value="PAGO A CUOTAS">PAGO A CUOTAS</SelectItem>
-                              <SelectItem value="RESERVA">RESERVA</SelectItem>
-                              <SelectItem value="SIN WSP">SIN WSP</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="flex items-center justify-end gap-2 pt-2">
-                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setEditingTxnId(null)} disabled={isSaving}>
-                            <X size={12} className="mr-1" /> Cancelar
-                          </Button>
-                          <Button size="sm" className="h-7 text-xs" onClick={() => handleSaveTxn(txn.id)} disabled={isSaving}>
-                            <Save size={12} className="mr-1" /> Guardar
-                          </Button>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Orden: {order.orderId}
                         </div>
                       </div>
-                    ) : (
-                      <>
-                        {txn.status && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Estado Pasarela:</span>
-                            <Badge variant="outline" className="text-xs border-primary/30 text-primary">
-                              {txn.status}
-                            </Badge>
-                          </div>
-                        )}
-                        <div className="flex justify-between items-center pt-2 border-t border-border/50">
-                          <span className="text-muted-foreground">Fecha:</span>
-                          <span className="font-medium text-right flex items-center gap-1">
-                            <Calendar size={13} />
-                            {new Date(txn.createdAt || lead.createdAt).toLocaleDateString()}
-                          </span>
+                      <div className="text-right">
+                        <div className="font-mono text-primary font-bold text-sm">
+                          ${totalAmount.toLocaleString()} USD
                         </div>
-                      </>
-                    )}
+                        <div className="text-[10px] text-muted-foreground">
+                          {order.transactions.length} transacción(es)
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="divide-y divide-border/40">
+                      {order.transactions.map((txn, tIndex) => {
+                        const isEditing = editingTxnId === txn.id;
+                        
+                        return (
+                          <div key={txn.id || tIndex} className="p-4 space-y-3 text-sm">
+                            <div className="flex justify-between items-center">
+                              <Badge variant="outline" className="text-[10px] text-foreground border-primary/30">
+                                {txn.pipelineSubstatus || 'SIN ESTADO LEAD'}
+                              </Badge>
+                              {!isEditing && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  onClick={() => {
+                                    setTxnStatus(txn.status || '');
+                                    setTxnSubstatus(txn.pipelineSubstatus || '');
+                                    setEditingTxnId(txn.id);
+                                  }} 
+                                  className="h-6 text-xs text-muted-foreground hover:text-primary px-2"
+                                >
+                                  <Pencil size={12} className="mr-1" /> Editar
+                                </Button>
+                              )}
+                            </div>
+
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-muted-foreground">Transacción:</span>
+                              <span className="font-medium truncate max-w-[150px]" title={txn.externalTxnId}>
+                                {txn.externalTxnId}
+                              </span>
+                            </div>
+
+                            {isEditing ? (
+                              <div className="pt-3 mt-3 border-t border-border/40 space-y-3">
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Nuevo Estado de Pasarela</Label>
+                                  <Select value={txnStatus} onValueChange={setTxnStatus}>
+                                    <SelectTrigger className="h-8 text-xs bg-card">
+                                      <SelectValue placeholder="Seleccionar estado" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="APPROVED">APPROVED</SelectItem>
+                                      <SelectItem value="COMPLETED">COMPLETED</SelectItem>
+                                      <SelectItem value="PENDING">PENDING</SelectItem>
+                                      <SelectItem value="CANCELED">CANCELED</SelectItem>
+                                      <SelectItem value="REFUNDED">REFUNDED</SelectItem>
+                                      <SelectItem value="CHARGEBACK">CHARGEBACK</SelectItem>
+                                      <SelectItem value="ABANDONED_CART">ABANDONED_CART</SelectItem>
+                                      <SelectItem value="EXPIRED">EXPIRED</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                {pipelineStages && (
+                                  <div className="space-y-1">
+                                    <Label className="text-xs text-muted-foreground">Nueva Etapa en Pipeline</Label>
+                                    <Select value={txnStage} onValueChange={setTxnStage}>
+                                      <SelectTrigger className="h-8 text-xs bg-card">
+                                        <SelectValue placeholder="No cambiar etapa" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="NO_CHANGE">No cambiar etapa</SelectItem>
+                                        {pipelineStages.map(s => (
+                                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                )}
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">Nuevo Estado del Lead</Label>
+                                  <Select value={txnSubstatus} onValueChange={setTxnSubstatus}>
+                                    <SelectTrigger className="h-8 text-xs bg-card">
+                                      <SelectValue placeholder="No cambiar estado" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="NO_CHANGE">No cambiar estado</SelectItem>
+                                      <SelectItem value="POR PAGAR">POR PAGAR</SelectItem>
+                                      <SelectItem value="SEGUIMIENTO">SEGUIMIENTO</SelectItem>
+                                      <SelectItem value="NO RESPONDE">NO RESPONDE</SelectItem>
+                                      <SelectItem value="NO CALIFICA">NO CALIFICA</SelectItem>
+                                      <SelectItem value="YA HABIA ENTRADO">YA HABIA ENTRADO</SelectItem>
+                                      <SelectItem value="PAGO COMPLETO">PAGO COMPLETO</SelectItem>
+                                      <SelectItem value="PAGO A CUOTAS">PAGO A CUOTAS</SelectItem>
+                                      <SelectItem value="RESERVA">RESERVA</SelectItem>
+                                      <SelectItem value="SIN WSP">SIN WSP</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="flex items-center justify-end gap-2 pt-2">
+                                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setEditingTxnId(null)} disabled={isSaving}>
+                                    <X size={12} className="mr-1" /> Cancelar
+                                  </Button>
+                                  <Button size="sm" className="h-7 text-xs" onClick={() => handleSaveTxn(txn.id)} disabled={isSaving}>
+                                    <Save size={12} className="mr-1" /> Guardar
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex justify-between items-center text-xs">
+                                  <span className="text-muted-foreground">Estado Pasarela:</span>
+                                  <span className={txn.status === 'APPROVED' || txn.status === 'COMPLETED' ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
+                                    {txn.status || 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs pt-1">
+                                  <span className="text-muted-foreground">Fecha:</span>
+                                  <span className="font-medium flex items-center gap-1">
+                                    <Calendar size={11} />
+                                    {new Date(txn.createdAt).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 );
               })}

@@ -68,13 +68,13 @@ export class SalesController {
           await this.salesService.importLeadCsv(projectId, parsed.data, req.user.sub);
           results.successful++;
         } catch (e: unknown) {
+          const errorMessage = e instanceof Error ? e.message : 'Error desconocido';
+          console.error(`[importLeadsCsv] Error insertando lead:`, errorMessage, 'Payload:', parsed.data);
           results.failed++;
-          results.errors.push({
-            item,
-            error: e instanceof Error ? e.message : 'Error desconocido',
-          });
+          results.errors.push({ item, error: errorMessage });
         }
       } else {
+        console.error(`[importLeadsCsv] Error de validación Zod:`, parsed.error.errors, 'Item:', item);
         results.failed++;
         results.errors.push({ item, error: parsed.error.errors });
       }
