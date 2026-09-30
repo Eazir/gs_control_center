@@ -142,6 +142,8 @@ export class HotmartAdapter {
     const paymentMethod = String(payment['type'] || payload['payment_type'] || '');
     const installments = Number(payment['installments_number']) || Number(payload['installments_number']) || 1;
 
+    const affiliates = (data['affiliates'] as unknown[]) || (payload['affiliates'] as unknown[]) || [];
+
     return {
       source: 'HOTMART',
       externalOrderId: transaction,
@@ -163,6 +165,7 @@ export class HotmartAdapter {
 
       offerCode,
       sck,
+      affiliates,
       recurrencyNumber,
       isSubscription,
       date,

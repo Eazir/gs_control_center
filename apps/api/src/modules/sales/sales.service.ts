@@ -6,7 +6,7 @@ import { HotmartAdapter } from '../../infrastructure/providers/hotmart/hotmart.a
 import { RawSale, ManualSaleDto, ProductItem, CsvLeadImportDto, CsvSaleImportDto } from '@gs/contracts';
 import { ListProjectProductsUseCase } from '../projects';
 import { IntegrationsService } from '../integrations';
-import { EventStatus, Prisma } from '@prisma/client';
+import { EventStatus, Prisma, LeadSituacion } from '@prisma/client';
 import { withRls } from '../../core/database';
 
 @Injectable()
@@ -157,12 +157,26 @@ export class SalesService implements OnModuleInit {
 
       // Idempotencia estricta: si ya existe una transacción con el mismo ID Y el mismo estado,
       // es un evento duplicado literal y se descarta sin procesar.
-      // Si el estado difiere, es una actualización de trazabilidad (ej. carrito → aprobado) y se continúa.
-      if (existingSale && existingSale.status === rawSale.status) {
+      // Excepción: Pago de cuotas (recurrencyNumber > 1) se permite para sumar al monto.
+      if (existingSale && existingSale.status === rawSale.status && (rawSale.recurrencyNumber || 1) <= 1) {
         this.logger.warn(`[SKIP-IDEMPOTENT] Transacción ${rawSale.externalTxnId} con estado ${rawSale.status} ya existe. Evento duplicado.`);
         await this.prisma.integrationEvent.update({
           where: { id: eventId },
           data: { status: EventStatus.PROCESSED, processedAt: new Date() },
+        });
+        return;
+      }
+
+      // Validar si es una cuota (recurrencia > 1) de una venta NO registrada
+      if ((rawSale.recurrencyNumber || 1) > 1 && !existingSale) {
+        this.logger.warn(`[DESCARTE] Evento ${eventId} es una cuota (${rawSale.recurrencyNumber}) pero no existe transacción original.`);
+        await this.prisma.integrationEvent.update({
+          where: { id: eventId },
+          data: {
+            status: EventStatus.SKIPPED_UNKNOWN_PRODUCT,
+            errorReason: `Pago de cuota sin transacción original registrada`,
+            processedAt: new Date(),
+          },
         });
         return;
       }
@@ -264,6 +278,20 @@ export class SalesService implements OnModuleInit {
         }
       }
 
+      let attribution = closerId ? 'COMERCIAL' : 'MARKETING';
+
+      // Validación de afiliados si no hay closer asignado
+      if (!closerId) {
+        const affiliates = rawSale.affiliates || [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const hasReynald = affiliates.some((a: any) => 
+          a?.affiliate_code === 'B100311196F' || (a?.name && a.name.includes('Reynald'))
+        );
+        if (hasReynald) {
+          attribution = 'COMERCIAL'; // Ventas equipo comercial sin closer, suman facturación pero sin comisión
+        }
+      }
+
       // 5. Valores comerciales tomados estrictamente del producto oficial del proyecto o de la BD histórica
       const officialProductName = matchedProduct!.name!;
       const officialAmount = matchedProduct!.price!;
@@ -274,21 +302,47 @@ export class SalesService implements OnModuleInit {
       const saleCreatedAt = rawSale.date ? new Date(rawSale.date) : new Date();
 
       await this.prisma.$transaction(async (tx) => {
-        // 6. Determinar etapa en pipeline y subestado del lead
-        let pipelineStage = this.determineStage(rawSale.status);
-        let pipelineSubstatus = this.determineSubstatus(rawSale.status);
+        // 6. Determinar situación y etapa en pipeline
+        let situacion = this.determineSituacion(rawSale.status);
+        let pipelineStage = this.determineStage(rawSale.status, situacion, !!closerId);
 
         // Upsert manual del Lead (comprador): priorizar teléfono, luego email
         let lead = null;
         if (rawSale.leadPhone) {
           lead = await tx.lead.findFirst({
-            where: { projectId: event.projectId, phone: rawSale.leadPhone }
+            where: { projectId: event.projectId, phone: rawSale.leadPhone },
+            include: { sales: true }
           });
         }
         if (!lead && rawSale.leadEmail) {
           lead = await tx.lead.findFirst({
-            where: { projectId: event.projectId, email: rawSale.leadEmail }
+            where: { projectId: event.projectId, email: rawSale.leadEmail },
+            include: { sales: true }
           });
+        }
+
+        let manualSaleToAdopt = null;
+
+        if (lead) {
+          const hasExistingSale = existingSale && lead.sales.some(s => s.id === existingSale.id);
+
+          if (!hasExistingSale && !existingSale) {
+            // Evento nuevo: buscar si el lead tiene una venta MANUAL que adoptar
+            manualSaleToAdopt = lead.sales.find(s => 
+              s.source === 'MANUAL' && 
+              s.productName === officialProductName &&
+              (!closerId || s.closerId === closerId)
+            );
+
+            // Si no hay venta manual para adoptar y el lead ya tiene OTRAS ventas,
+            // creamos un nuevo lead (1 lead x transacción)
+            if (!manualSaleToAdopt && lead.sales.length > 0) {
+              lead = null; // Forzar creación de nuevo lead abajo
+            }
+          } else if (existingSale && !hasExistingSale) {
+            // La venta existente pertenece a otro lead. Recuperamos ese lead original.
+            lead = await tx.lead.findUnique({ where: { id: existingSale.leadId }, include: { sales: true } });
+          }
         }
 
         if (lead) {
@@ -297,16 +351,18 @@ export class SalesService implements OnModuleInit {
           if (!lead.name && rawSale.leadName) updateData.name = rawSale.leadName;
           if (!lead.email && rawSale.leadEmail) updateData.email = rawSale.leadEmail;
           if (!lead.phone && rawSale.leadPhone) updateData.phone = rawSale.leadPhone;
-          // Asignamos el pipelineStage y closerId si es que aplican
+          
           updateData.pipelineStage = pipelineStage;
+          if (situacion) updateData.situacion = situacion;
           if (closerId && !lead.closerId) updateData.closerId = closerId;
 
           lead = await tx.lead.update({
             where: { id: lead.id },
-            data: updateData
+            data: updateData,
+            include: { sales: true }
           });
         } else {
-          // No existe: crear
+          // No existe o se forzó creación por 1:1: crear
           lead = await tx.lead.create({
             data: {
               projectId: event.projectId,
@@ -314,8 +370,10 @@ export class SalesService implements OnModuleInit {
               name: rawSale.leadName ?? null,
               phone: rawSale.leadPhone ?? null,
               pipelineStage,
+              situacion: situacion ?? null,
               closerId: closerId ?? null,
-            }
+            },
+            include: { sales: true }
           });
         }
 
@@ -324,9 +382,18 @@ export class SalesService implements OnModuleInit {
           const currentMetadata = (existingSale.metadata as Record<string, unknown>) || {};
           const currentHistory = Array.isArray(currentMetadata.history) ? currentMetadata.history : [];
           
-          // Agregamos el historial si el estado cambió
           let newHistory = currentHistory;
-          if (existingSale.status !== rawSale.status || currentHistory.length === 0) {
+          let newAmount = Number(existingSale.amount);
+          
+          // Lógica de Recurrencia (Cuota)
+          if ((rawSale.recurrencyNumber || 1) > 1) {
+            newAmount = newAmount + officialAmount;
+            newHistory = [...newHistory, this.buildHistoryEvent('STATUS_CHANGE', { 
+              status: `CUOTA_${rawSale.recurrencyNumber}_${rawSale.status}`, 
+              timestamp: saleCreatedAt 
+            })];
+            this.logger.log(`[CUOTA] Sumando cuota ${rawSale.recurrencyNumber} a venta ${existingSale.externalTxnId}. Nuevo monto: ${newAmount}`);
+          } else if (existingSale.status !== rawSale.status || currentHistory.length === 0) {
             if (currentHistory.length === 0) {
               newHistory = [this.buildHistoryEvent('STATUS_CHANGE', { status: existingSale.status, timestamp: existingSale.createdAt })];
             }
@@ -336,6 +403,7 @@ export class SalesService implements OnModuleInit {
           const newMetadata = {
             ...currentMetadata,
             ...(rawSale.metadata ? (rawSale.metadata as object) : {}),
+            attribution,
             history: newHistory,
           };
 
@@ -343,14 +411,13 @@ export class SalesService implements OnModuleInit {
             where: { id: existingSale.id },
             data: {
               status: rawSale.status,
-              amount: officialAmount,
+              amount: newAmount,
               currency: officialCurrency,
               installments: officialInstallments,
               paymentMethod: rawSale.paymentMethod ?? existingSale.paymentMethod,
               offerCode: rawSale.offerCode ?? matchedProduct?.offerCode ?? null,
               sck: rawSale.sck ?? null,
               pipelineStage: pipelineStage,
-              pipelineSubstatus: pipelineSubstatus,
               metadata: newMetadata as Prisma.InputJsonValue,
               updatedAt: new Date(),
             },
@@ -361,10 +428,44 @@ export class SalesService implements OnModuleInit {
           this.logger.log(
             `[ACTUALIZADO] Transacción ${rawSale.externalTxnId} actualizada a estado ${rawSale.status}.`
           );
+        } else if (manualSaleToAdopt) {
+          // Adoptar Venta Manual
+          const currentMetadata = (manualSaleToAdopt.metadata as Record<string, unknown>) || {};
+          const currentHistory = Array.isArray(currentMetadata.history) ? currentMetadata.history : [];
+          const newHistory = [...currentHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt })];
+          
+          const newMetadata = {
+            ...currentMetadata,
+            ...(rawSale.metadata ? (rawSale.metadata as object) : {}),
+            attribution,
+            adoptedFromManual: true,
+            history: newHistory,
+          };
+
+          await tx.sale.update({
+            where: { id: manualSaleToAdopt.id },
+            data: {
+              source: rawSale.source, // Cambia de MANUAL a HOTMART
+              externalOrderId: rawSale.externalOrderId,
+              externalTxnId: rawSale.externalTxnId,
+              status: rawSale.status,
+              amount: officialAmount,
+              currency: officialCurrency,
+              paymentMethod: rawSale.paymentMethod ?? null,
+              installments: officialInstallments,
+              offerCode: rawSale.offerCode ?? matchedProduct?.offerCode ?? null,
+              sck: rawSale.sck ?? null,
+              pipelineStage: pipelineStage,
+              metadata: newMetadata as Prisma.InputJsonValue,
+              updatedAt: new Date(),
+            }
+          });
+          this.logger.log(`[ADOPTADO] Venta MANUAL ${manualSaleToAdopt.externalTxnId} sobrescrita con ${rawSale.externalTxnId}.`);
         } else {
           // Transacción nueva -> crear
           const initialMetadata = {
             ...(rawSale.metadata ? (rawSale.metadata as object) : {}),
+            attribution,
             history: [this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt })],
           };
 
@@ -386,7 +487,6 @@ export class SalesService implements OnModuleInit {
               sck: rawSale.sck ?? null,
               closerId: lead.closerId ?? null,
               pipelineStage: pipelineStage,
-              pipelineSubstatus: pipelineSubstatus,
               metadata: initialMetadata as Prisma.InputJsonValue,
               createdAt: saleCreatedAt,
             },
@@ -416,38 +516,42 @@ export class SalesService implements OnModuleInit {
     }
   }
 
-  private determineStage(status: string): string {
-    switch (status) {
-      case 'APPROVED': 
-      case 'PURCHASE_APPROVED': 
-      case 'COMPLETE': 
-        return 'won';
-      case 'REFUNDED': 
-      case 'DISPUTE': 
-        return 'lost';
-      case 'ABANDONED_CART':
-      case 'CANCELED': 
-      case 'CHARGEBACK': 
-      case 'EXPIRED':
-        return 'recovery';
-      case 'WAITING_PAYMENT':
-      case 'DELAYED':
-      case 'BILLET_PRINTED': 
-        return 'followup';
-      default: 
-        return 'uncontacted';
+  private determineStage(status: string, situacion: string | null = null, hasCloser: boolean = false): string {
+    const sit = situacion || '';
+    
+    // Ganado
+    if (['PAGO_COMPLETO', 'PAGO_A_CUOTAS'].includes(sit) || ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE'].includes(status)) {
+      return 'won';
     }
+    // Perdido / Descartado
+    if (['NO_RESPONDE', 'NO_CALIFICA', 'SIN_WSP'].includes(sit) || ['REFUNDED'].includes(status)) {
+      return 'lost';
+    }
+    // En recuperacion
+    if (['ABANDONED_CART', 'CHARGEBACK', 'DISPUTE', 'CANCELED', 'EXPIRED'].includes(status)) {
+      return 'recovery';
+    }
+    // En seguimiento
+    if (['SEGUIMIENTO', 'POR_PAGAR', 'RESERVA'].includes(sit) || ['WAITING_PAYMENT', 'DELAYED', 'BILLET_PRINTED'].includes(status)) {
+      return 'followup';
+    }
+    // Sin contactar
+    if (!sit || !hasCloser) {
+      return 'uncontacted';
+    }
+
+    return 'uncontacted';
   }
 
-  private determineSubstatus(status: string): string | null {
+  private determineSituacion(status: string): LeadSituacion | null {
     switch (status) {
       case 'APPROVED': 
       case 'PURCHASE_APPROVED': 
       case 'COMPLETE': 
-        return 'PAGO COMPLETO';
+        return 'PAGO_COMPLETO';
       case 'WAITING_PAYMENT':
       case 'BILLET_PRINTED':
-        return 'POR PAGAR';
+        return 'POR_PAGAR';
       case 'DELAYED':
       case 'ABANDONED_CART':
       case 'CANCELED':
@@ -660,25 +764,43 @@ export class SalesService implements OnModuleInit {
     const externalTxnId = `MANUAL-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     
     return this.prisma.$transaction(async (tx) => {
-      const lead = await tx.lead.upsert({
-        where: {
-          projectId_email: { projectId, email: dto.leadEmail }
-        },
-        create: {
-          projectId,
-          email: dto.leadEmail,
-          name: dto.leadName,
-          phone: dto.leadPhone ?? null,
-          closerId: dto.closerId ?? null,
-          pipelineStage: this.determineStage(dto.status)
-        },
-        update: {
-          name: dto.leadName,
-          phone: dto.leadPhone ?? null,
-          ...(dto.closerId ? { closerId: dto.closerId } : {}),
-          pipelineStage: this.determineStage(dto.status)
-        }
-      });
+      let lead = null;
+      if (dto.leadPhone) {
+        lead = await tx.lead.findFirst({ where: { projectId, phone: dto.leadPhone }, include: { sales: true } });
+      }
+      if (!lead && dto.leadEmail) {
+        lead = await tx.lead.findFirst({ where: { projectId, email: dto.leadEmail }, include: { sales: true } });
+      }
+
+      // Si el lead ya tiene transacciones activas, creamos uno nuevo para esta transacción manual
+      if (lead && lead.sales.length > 0) {
+        lead = null;
+      }
+
+      if (lead) {
+        lead = await tx.lead.update({
+          where: { id: lead.id },
+          data: {
+            name: dto.leadName,
+            phone: dto.leadPhone ?? null,
+            ...(dto.closerId ? { closerId: dto.closerId } : {}),
+            pipelineStage: this.determineStage(dto.status)
+          },
+          include: { sales: true }
+        });
+      } else {
+        lead = await tx.lead.create({
+          data: {
+            projectId,
+            email: dto.leadEmail,
+            name: dto.leadName,
+            phone: dto.leadPhone ?? null,
+            closerId: dto.closerId ?? null,
+            pipelineStage: this.determineStage(dto.status)
+          },
+          include: { sales: true }
+        });
+      }
 
       const initialMetadata = {
         history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: dto.date ? new Date(dto.date) : new Date() })],
@@ -917,6 +1039,7 @@ export class SalesService implements OnModuleInit {
     if (data.email !== undefined) updateData.email = data.email;
     if (data.phone !== undefined) updateData.phone = data.phone;
     if (data.closerId !== undefined) updateData.closerId = data.closerId;
+    if (data.situacion !== undefined) updateData.situacion = data.situacion as import('@prisma/client').LeadSituacion | null;
 
     await this.prisma.$transaction(async (tx) => {
       if (Object.keys(updateData).length > 0) {
@@ -1047,9 +1170,11 @@ export class SalesService implements OnModuleInit {
     }
 
     // ── Determinar etapa del pipeline ──
-    let defaultStage = 'uncontacted';
+    let derivedStage = 'uncontacted';
     if (dto.pipelineStage) {
-      defaultStage = dto.pipelineStage;
+      derivedStage = dto.pipelineStage;
+    } else if (dto.situacion) {
+      derivedStage = this.determineStage('', dto.situacion, !!closerId);
     } else {
       const project = await this.prisma.project.findUnique({
         where: { id: projectId },
@@ -1057,7 +1182,7 @@ export class SalesService implements OnModuleInit {
       });
       const settings = project?.settings as { pipelineStages?: { id: string }[] } | null;
       if (settings?.pipelineStages?.[0]?.id) {
-        defaultStage = settings.pipelineStages[0].id;
+        derivedStage = settings.pipelineStages[0].id;
       }
     }
 
@@ -1076,7 +1201,11 @@ export class SalesService implements OnModuleInit {
         if (!lead.email && dto.email) updateData.email = dto.email;
         if (!lead.phone && dto.phone) updateData.phone = dto.phone;
         if (closerId) updateData.closerId = closerId;
-        if (dto.pipelineStage) updateData.pipelineStage = dto.pipelineStage;
+        
+        // Si se envía pipelineStage o situacion explicitamente, se actualizan. 
+        // Si situacion viene pero pipelineStage no, pipelineStage tomará derivedStage que se calculó arriba.
+        updateData.pipelineStage = derivedStage;
+        if (dto.situacion !== undefined) updateData.situacion = dto.situacion;
         
         lead = await tx.lead.update({
           where: { id: lead.id },
@@ -1090,7 +1219,8 @@ export class SalesService implements OnModuleInit {
             name: dto.name ?? null,
             phone: dto.phone ?? null,
             closerId: closerId ?? null,
-            pipelineStage: defaultStage,
+            situacion: dto.situacion ?? null,
+            pipelineStage: derivedStage,
           }
         });
       }
@@ -1148,16 +1278,28 @@ export class SalesService implements OnModuleInit {
       }
 
       // 2. Determinar etapa en pipeline para esta transacción
-      const pipelineStage = this.determineStage(dto.status);
-      const pipelineSubstatus = this.determineSubstatus(dto.status);
+      const situacion = this.determineSituacion(dto.status);
+      const pipelineStage = this.determineStage(dto.status, situacion, !!closerId);
 
       // 3. Crear o actualizar Lead comprador (Priorizar Teléfono)
       let lead = null;
       if (dto.leadPhone) {
-        lead = await tx.lead.findFirst({ where: { projectId, phone: dto.leadPhone } });
+        lead = await tx.lead.findFirst({ 
+          where: { projectId, phone: dto.leadPhone },
+          include: { sales: true }
+        });
       }
       if (!lead && dto.leadEmail) {
-        lead = await tx.lead.findFirst({ where: { projectId, email: dto.leadEmail } });
+        lead = await tx.lead.findFirst({ 
+          where: { projectId, email: dto.leadEmail },
+          include: { sales: true } 
+        });
+      }
+
+      // Si el lead ya tiene transacciones (y esta importación es una transacción NUEVA),
+      // creamos un nuevo lead para cumplir la regla 1 Lead x Transacción
+      if (lead && lead.sales.length > 0) {
+        lead = null;
       }
 
       if (lead) {
@@ -1168,9 +1310,10 @@ export class SalesService implements OnModuleInit {
         // Solo actualizar el pipeline stage del lead si la nueva transacción
         // representa un avance o cambio relevante (por simplicidad, lo sobreescribimos)
         updateData.pipelineStage = pipelineStage;
+        if (situacion) updateData.situacion = situacion;
         if (closerId && !lead.closerId) updateData.closerId = closerId;
         
-        lead = await tx.lead.update({ where: { id: lead.id }, data: updateData });
+        lead = await tx.lead.update({ where: { id: lead.id }, data: updateData, include: { sales: true } });
       } else {
         lead = await tx.lead.create({
           data: {
@@ -1179,8 +1322,10 @@ export class SalesService implements OnModuleInit {
             name: dto.leadName ?? null,
             phone: dto.leadPhone ?? null,
             pipelineStage,
+            situacion: situacion ?? null,
             closerId,
-          }
+          },
+          include: { sales: true }
         });
       }
 
@@ -1207,7 +1352,6 @@ export class SalesService implements OnModuleInit {
           paymentMethod: dto.paymentMethod ?? null,
           installments: dto.installments,
           pipelineStage,
-          pipelineSubstatus,
           metadata: { 
             history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: saleDate })],
             isFirstInstallment: dto.isFirstInstallment

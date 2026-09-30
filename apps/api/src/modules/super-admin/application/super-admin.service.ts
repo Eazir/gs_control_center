@@ -57,6 +57,9 @@ export class SuperAdminService {
       // Borrar ventas (necesario antes que leads por la relación FK en el schema)
       await tx.sale.deleteMany({ where: { projectId } });
 
+      // Borrar productos de interés (FK hacia Lead)
+      await tx.leadInterestedProduct.deleteMany({ where: { lead: { projectId } } });
+
       // Borrar leads
       await tx.lead.deleteMany({ where: { projectId } });
 
@@ -72,6 +75,7 @@ export class SuperAdminService {
       // 1. Vaciar contenido
       await tx.integrationEvent.deleteMany({ where: { projectId } });
       await tx.sale.deleteMany({ where: { projectId } });
+      await tx.leadInterestedProduct.deleteMany({ where: { lead: { projectId } } });
       await tx.lead.deleteMany({ where: { projectId } });
 
       // 2. Eliminar integraciones y configuraciones

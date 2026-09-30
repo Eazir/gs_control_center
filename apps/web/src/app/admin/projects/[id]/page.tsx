@@ -132,6 +132,7 @@ interface ProjectLead {
   installments?: number;
   offerCode?: string;
   pipelineSubstatus?: string;
+  situacion?: string;
   latestTransaction?: TransactionData | null;
 }
 
@@ -443,6 +444,7 @@ export default function ProjectDetailsPage() {
           email: sale.lead?.email || 'Sin Correo',
           phone: sale.lead?.phone || '',
           stageId: sale.pipelineStage || 'uncontacted',
+          situacion: sale.lead?.situacion || undefined,
           pipelineSubstatus: sale.pipelineSubstatus || undefined,
           closerName: sale.closerName || 'Sin Asignar',
           closerId: sale.closerId || undefined,
@@ -468,6 +470,7 @@ export default function ProjectDetailsPage() {
           email: l.email,
           phone: l.phone,
           stageId: l.stageId,
+          situacion: l.situacion,
           closerName: 'Sin Asignar', // Se resolverá al renderizar si no lo trae
           closerId: l.closerId,
           productName: l.productName,
@@ -530,8 +533,8 @@ export default function ProjectDetailsPage() {
   // -------------------------------------------------------------
   const handleMoveLeadStage = async (leadId: string, targetStageId: string) => {
     // Actualización optimista
-    const updated = leads.map((l) => (l.id === leadId ? { ...l, stageId: targetStageId } : l));
-    saveLeadsState(updated);
+    setLeads(prev => prev.map((l) => (l.id === leadId ? { ...l, stageId: targetStageId } : l)));
+    setBaseLeads(prev => prev.map((l) => (l.id === leadId ? { ...l, stageId: targetStageId } : l)));
     
     // Impactar en backend
     try {
@@ -1323,7 +1326,7 @@ export default function ProjectDetailsPage() {
         l.fullName.toLowerCase().includes(leadSearch.toLowerCase()) ||
         l.email.toLowerCase().includes(leadSearch.toLowerCase()) ||
         l.phone.includes(leadSearch) ||
-        l.productName.toLowerCase().includes(leadSearch.toLowerCase());
+        (l.productName && l.productName.toLowerCase().includes(leadSearch.toLowerCase()));
 
       const matchCloser = closerFilter === 'ALL' || l.closerName === closerFilter;
       const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
@@ -1548,7 +1551,7 @@ export default function ProjectDetailsPage() {
             <Kanban size={15} />
             <span>Pipeline</span>
             <Badge variant="gold" className="ml-1 text-[10px] px-1.5 py-0 h-4">
-              {leads.length}
+              {baseLeads.length}
             </Badge>
           </button>
 
@@ -1661,7 +1664,7 @@ export default function ProjectDetailsPage() {
             {/* TABLERO KANBAN DE ETAPAS */}
             <div className="flex flex-nowrap items-start gap-4 overflow-x-auto pb-6 pt-2 custom-scrollbar">
               {pipelineStages.map((stage) => {
-                let stageLeads = filteredLeads.filter((l) => l.stageId === stage.id);
+                let stageLeads = filteredBaseLeads.filter((l) => l.stageId === stage.id);
                 
                 // Aplicar el filtro de cuotas SOLO en la etapa "Ganado"
                 if (stage.id === 'won' && paymentMethodFilter !== 'ALL') {
@@ -3762,6 +3765,7 @@ export default function ProjectDetailsPage() {
             return { id: c.userId, name: u?.fullName || 'Desconocido' };
           })}
           pipelineStages={pipelineStages}
+          products={products}
           onSave={() => {
             loadLeads();
             setSelectedLead(null);

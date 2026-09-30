@@ -22,6 +22,7 @@ export const RawSaleSchema = z.object({
   // Metadatos extendidos de Hotmart / Pasarelas
   offerCode: z.string().nullable().optional(),
   sck: z.string().nullable().optional(),
+  affiliates: z.array(z.any()).nullable().optional(),
   recurrencyNumber: z.number().nullable().optional(),
   isSubscription: z.boolean().nullable().optional(),
   date: z.union([z.string(), z.number(), z.date()]).nullable().optional(),
@@ -47,6 +48,11 @@ export const ManualSaleSchema = z.object({
 export type ManualSaleDto = z.infer<typeof ManualSaleSchema>;
 
 // Esquemas de importación CSV masiva
+export const LeadSituacionEnum = z.enum([
+  'POR_PAGAR', 'SEGUIMIENTO', 'NO_RESPONDE', 'NO_CALIFICA', 
+  'YA_HABIA_ENTRADO', 'PAGO_COMPLETO', 'PAGO_A_CUOTAS', 'RESERVA', 'SIN_WSP'
+]);
+
 export const CsvLeadImportSchema = z.object({
   name: z.string().optional(),
   email: z.string().email('Email inválido para importación').optional().nullable(),
@@ -54,6 +60,10 @@ export const CsvLeadImportSchema = z.object({
   closerId: z.string().optional().nullable(), // UUID directo del closer (asignación manual/equitativa)
   sck: z.string().optional().nullable(), // Código SCK para resolver closer vía projectUser.sckCodes
   productOfInterest: z.string().optional(),
+  situacion: z.preprocess(
+    (val) => typeof val === 'string' ? val.toUpperCase().replace(/\s+/g, '_') : val,
+    LeadSituacionEnum.nullable().optional()
+  ), // Nueva columna de situación (lista específica)
   pipelineStage: z.string().optional().nullable(), // Estado del lead (opcional): uncontacted, followup, etc.
 });
 
@@ -116,6 +126,7 @@ export const UpdateLeadSchema = z.object({
   name: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),
   email: z.string().email().optional(),
+  situacion: LeadSituacionEnum.nullable().optional(),
   closerId: z.string().uuid().nullable().optional(),
   productOfInterest: z.string().nullable().optional(),
 });

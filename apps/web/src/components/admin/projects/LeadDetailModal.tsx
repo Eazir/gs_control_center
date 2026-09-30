@@ -32,6 +32,7 @@ export interface LeadData {
   source: string;
   createdAt: string;
   pipelineSubstatus?: string;
+  situacion?: string;
   interestedProducts?: string[]; // Nueva data de productos de interes
   history?: { orderId: string; transactions: any[] }[]; // Historial agrupado
 }
@@ -44,10 +45,11 @@ export interface LeadDetailProps {
   projectId?: string;
   activeClosers?: { id: string; name: string }[];
   pipelineStages?: { id: string; name: string }[];
+  products?: { id: string; name: string; ownerCloserId?: string | null }[];
   onSave?: () => void;
 }
 
-export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, activeClosers, pipelineStages, onSave }: LeadDetailProps) {
+export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, activeClosers, pipelineStages, products, onSave }: LeadDetailProps) {
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [editingTxnId, setEditingTxnId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -57,7 +59,9 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [closerId, setCloserId] = useState<string | undefined>(undefined);
-  const [productOfInterest, setProductOfInterest] = useState('');
+  const [productOfInterest, setProductOfInterest] = useState('none');
+  const [situacion, setSituacion] = useState('none');
+  const [stageId, setStageId] = useState('');
 
   // Form State - Transaction
   const [txnStatus, setTxnStatus] = useState('');
@@ -70,7 +74,9 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
       setEmail(lead.email || '');
       setPhone(lead.phone || '');
       setCloserId(lead.closerId || 'unassigned');
-      setProductOfInterest('');
+      setProductOfInterest('none');
+      setSituacion(lead.situacion || 'none');
+      setStageId(lead.stageId || '');
       
       setTxnStatus('');
       setTxnStage('');
@@ -88,17 +94,26 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
     
     setIsSaving(true);
     try {
-      const res = await fetchWithAuth(`/sales/project/${projectId}/leads/${targetLeadId}`, {
+      const pStage = stageId && stageId !== lead.stageId ? fetchWithAuth(`/sales/project/${projectId}/leads/${targetLeadId}/stage`, {
+        method: 'POST',
+        body: JSON.stringify({ stageId })
+      }) : Promise.resolve({ ok: true });
+
+      const pContact = fetchWithAuth(`/sales/project/${projectId}/leads/${targetLeadId}`, {
         method: 'POST',
         body: JSON.stringify({
           name,
           email,
           phone,
+          situacion: situacion === 'none' ? null : situacion,
           closerId: closerId === 'unassigned' ? null : closerId,
-          productOfInterest: productOfInterest.trim() || undefined,
+          productOfInterest: productOfInterest === 'none' ? undefined : productOfInterest,
         }),
       });
-      if (res.ok) {
+
+      const [resContact, resStage] = await Promise.all([pContact, pStage]);
+
+      if (resContact.ok && resStage.ok) {
         setIsEditingContact(false);
         onSave?.();
       }
@@ -130,6 +145,14 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
 
   const orders = lead.history && lead.history.length > 0 ? lead.history : [];
   const interestedProducts = lead.interestedProducts || [];
+  
+  // Filter products by closerId if the lead has a closer assigned
+  const availableProducts = products?.filter(p => {
+    if (closerId && closerId !== 'unassigned') {
+      return p.ownerCloserId === closerId;
+    }
+    return true; // if no closer assigned, show all
+  }) || [];
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -164,25 +187,74 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                 <div className="space-y-3">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Nombre</Label>
-                    <Input value={name} onChange={e => setName(e.target.value)} className="h-8 text-xs bg-card" />
+                    <Input value={name} onChange={e => setName(e.target.value)} className="h-8 text-xs bg-card text-foreground" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Email</Label>
-                    <Input value={email} onChange={e => setEmail(e.target.value)} className="h-8 text-xs bg-card" />
+                    <Input value={email} onChange={e => setEmail(e.target.value)} className="h-8 text-xs bg-card text-foreground" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Teléfono</Label>
-                    <Input value={phone} onChange={e => setPhone(e.target.value)} className="h-8 text-xs bg-card" />
+                    <Input value={phone} onChange={e => setPhone(e.target.value)} className="h-8 text-xs bg-card text-foreground" />
                   </div>
+
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Producto de Interés a agregar</Label>
-                    <Input value={productOfInterest} onChange={e => setProductOfInterest(e.target.value)} placeholder="Nombre del producto" className="h-8 text-xs bg-card" />
+                    <Label className="text-xs text-muted-foreground">Etapa en el Pipeline</Label>
+                    <Select value={stageId} onValueChange={setStageId}>
+                      <SelectTrigger className="h-8 text-xs bg-card text-foreground">
+                        <SelectValue placeholder="Seleccionar etapa" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {pipelineStages?.map(s => (
+                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Situación</Label>
+                    <Select value={situacion} onValueChange={setSituacion}>
+                      <SelectTrigger className="h-8 text-xs bg-card text-foreground">
+                        <SelectValue placeholder="Seleccionar situación" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Sin situación</SelectItem>
+                        <SelectItem value="POR_PAGAR">POR PAGAR</SelectItem>
+                        <SelectItem value="SEGUIMIENTO">SEGUIMIENTO</SelectItem>
+                        <SelectItem value="NO_RESPONDE">NO RESPONDE</SelectItem>
+                        <SelectItem value="NO_CALIFICA">NO CALIFICA</SelectItem>
+                        <SelectItem value="YA_HABIA_ENTRADO">YA HABIA ENTRADO</SelectItem>
+                        <SelectItem value="PAGO_COMPLETO">PAGO COMPLETO</SelectItem>
+                        <SelectItem value="PAGO_A_CUOTAS">PAGO A CUOTAS</SelectItem>
+                        <SelectItem value="RESERVA">RESERVA</SelectItem>
+                        <SelectItem value="SIN_WSP">SIN WSP</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {products && products.length > 0 && (
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Producto de Interés a agregar</Label>
+                      <Select value={productOfInterest} onValueChange={setProductOfInterest}>
+                        <SelectTrigger className="h-8 text-xs bg-card text-foreground">
+                          <SelectValue placeholder="Seleccionar producto" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Ninguno</SelectItem>
+                          {availableProducts.map(p => (
+                            <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
                   {activeClosers && (
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground">Closer Asignado</Label>
-                      <Select value={closerId || ''} onValueChange={setCloserId}>
-                        <SelectTrigger className="h-8 text-xs bg-card">
+                      <Select value={closerId || 'unassigned'} onValueChange={setCloserId}>
+                        <SelectTrigger className="h-8 text-xs bg-card text-foreground">
                           <SelectValue placeholder="Seleccionar closer" />
                         </SelectTrigger>
                         <SelectContent>
@@ -230,6 +302,16 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                     ) : (
                       <span className="font-medium text-right">No provisto</span>
                     )}
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Etapa en Pipeline:</span>
+                    <Badge variant="outline" className="bg-muted/50 border-border/80">{stageName || 'Sin contactar'}</Badge>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Situación:</span>
+                    <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20">
+                      {lead.situacion ? lead.situacion.replace(/_/g, ' ') : 'Ninguna'}
+                    </Badge>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground">Closer Asignado:</span>

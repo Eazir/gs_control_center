@@ -18,7 +18,8 @@ const LEADS_FIELDS = [
   { key: 'phone', label: 'Teléfono (Requerido)', required: true },
   { key: 'name', label: 'Nombre (Opcional)', required: false },
   { key: 'email', label: 'Correo (Opcional)', required: false },
-  { key: 'pipelineStage', label: 'Estado del Lead (Opcional)', required: false },
+  { key: 'situacion', label: 'Situación (NO_RESPONDE, YA_HABIA_ENTRADO, etc)', required: false },
+  { key: 'pipelineStage', label: 'Etapa manual (uncontacted, followup, won, lost)', required: false },
   { key: 'sck', label: 'Código SCK (Usar si la asignación es por SCK)', required: false },
 ];
 

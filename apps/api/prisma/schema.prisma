@@ -237,6 +237,20 @@ model IntegrationEvent {
 // SCHEMA: sales
 // ============================================================================
 
+enum LeadSituacion {
+  POR_PAGAR
+  SEGUIMIENTO
+  NO_RESPONDE
+  NO_CALIFICA
+  YA_HABIA_ENTRADO
+  PAGO_COMPLETO
+  PAGO_A_CUOTAS
+  RESERVA
+  SIN_WSP
+
+  @@schema("sales")
+}
+
 model Lead {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   projectId       String    @map("project_id") @db.Uuid
@@ -247,8 +261,9 @@ model Lead {
   phone           String?
   
   // Pipeline
-  pipelineStage   String    @default("uncontacted") @map("pipeline_stage")
-  closerId        String?   @map("closer_id") @db.Uuid // Referencia lógica a auth.users(id)
+  pipelineStage   String         @default("uncontacted") @map("pipeline_stage")
+  situacion       LeadSituacion? @map("situacion")
+  closerId        String?        @map("closer_id") @db.Uuid // Referencia lógica a auth.users(id)
   
   // Métricas rápidas cacheadas (opcional pero útil)
   totalValue      Decimal   @default(0) @map("total_value") @db.Decimal(10, 2)
@@ -260,7 +275,6 @@ model Lead {
   sales           Sale[]
   interestedProducts LeadInterestedProduct[]
 
-  @@unique([projectId, email]) // Un lead es único por correo electrónico en un proyecto
   @@index([projectId, closerId])
   @@index([projectId, pipelineStage])
   @@map("leads")
