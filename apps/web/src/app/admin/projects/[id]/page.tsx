@@ -444,34 +444,48 @@ export default function ProjectDetailsPage() {
         setAllProjectTransactions(Array.isArray(txData) ? txData : []);
       }
 
+      let leadsList: any[] = [];
+      if (leadsRes.ok) {
+        const lData = await leadsRes.json();
+        leadsList = Array.isArray(lData) ? lData : [];
+        setBaseLeads(leadsList);
+      }
+
       if (salesRes.ok) {
         const data = await salesRes.json();
         const sales = Array.isArray(data) ? data : [];
-        const mappedOpportunities = sales.map((sale: any) => ({
-          id: sale.lead?.id || sale.id, // Kanban drag-and-drop requires lead.id to update correctly
-          leadId: sale.lead?.id,
-          fullName: sale.lead?.name || 'Sin Nombre',
-          email: sale.lead?.email || 'Sin Correo',
-          phone: sale.lead?.phone || '',
-          stageId: sale.pipelineStage || 'uncontacted',
-          situacion: sale.lead?.situacion || undefined,
-          pipelineSubstatus: sale.pipelineSubstatus || undefined,
-          closerName: sale.closerName || 'Sin Asignar',
-          closerId: sale.closerId || undefined,
-          productName: sale.productName,
-          estimatedValue: sale.amount,
-          source: sale.source,
-          createdAt: sale.createdAt,
-          installments: sale.installments,
-          offerCode: sale.offerCode,
-          latestTransaction: sale, // Guardamos la venta completa para usarla en el modal
-        }));
+        const mappedOpportunities = sales.map((sale: any) => {
+          const leadMatch = leadsList.find((l: any) => l.id === sale.lead?.id);
+          const history = leadMatch?.latestTransaction?.history || undefined;
+
+          return {
+            id: sale.lead?.id || sale.id, // Kanban drag-and-drop requires lead.id to update correctly
+            leadId: sale.lead?.id,
+            fullName: sale.lead?.name || 'Sin Nombre',
+            email: sale.lead?.email || 'Sin Correo',
+            phone: sale.lead?.phone || '',
+            stageId: sale.lead?.pipelineStage || sale.pipelineStage || 'uncontacted',
+            situacion: sale.lead?.situacion || undefined,
+            interestedProducts: sale.lead?.interestedProducts || undefined,
+            pipelineSubstatus: sale.pipelineSubstatus || undefined,
+            closerName: sale.closerName || 'Sin Asignar',
+            closerId: sale.closerId || undefined,
+            productName: sale.productName,
+            estimatedValue: sale.amount,
+            source: sale.source,
+            createdAt: sale.createdAt,
+            installments: sale.installments,
+            offerCode: sale.offerCode,
+            latestTransaction: sale, // Guardamos la venta completa
+            history: history, // ¡Ahora pasamos la historia procesada desde listLeads!
+          };
+        });
         setLeads(mappedOpportunities);
       }
 
       if (leadsRes.ok) {
-        const data = await leadsRes.json();
-        const apiLeads = Array.isArray(data) ? data : [];
+        // Reuse the leadsList we already parsed
+        const apiLeads = leadsList;
         // Map backend lead response to ProjectLead type
         const mappedLeads = apiLeads.map((l: any) => ({
           id: l.id,
@@ -3775,6 +3789,7 @@ export default function ProjectDetailsPage() {
           })}
           pipelineStages={pipelineStages}
           products={products}
+          allTransactions={allProjectTransactions}
           onSave={() => {
             loadLeads();
             setSelectedLead(null);

@@ -47,10 +47,11 @@ export interface LeadDetailProps {
   activeClosers?: { id: string; name: string }[];
   pipelineStages?: { id: string; name: string }[];
   products?: { id: string; name: string; ownerCloserId?: string | null | undefined }[];
+  allTransactions?: any[]; // Historial completo para agrupar
   onSave?: () => void;
 }
 
-export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, activeClosers, pipelineStages, products, onSave }: LeadDetailProps) {
+export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, activeClosers, pipelineStages, products, allTransactions = [], onSave }: LeadDetailProps) {
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [editingTxnId, setEditingTxnId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -149,8 +150,23 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
       setIsSaving(false);
     }
   };
+  // Asegurarnos de que el historial tenga la estructura correcta { orderId, transactions }
+  // Si viene con type STATUS_CHANGE, es el historial de una sola transacción y no sirve aquí.
+  let validHistory = lead.history && lead.history.length > 0 && (lead.history[0] as any)?.transactions ? lead.history : [];
 
-  const orders = lead.history && lead.history.length > 0 ? lead.history : [];
+  // Si nos pasaron todas las transacciones, agrupamos nosotros mismos
+  if (allTransactions.length > 0) {
+    const leadTxns = allTransactions.filter((t) => t.lead?.id === lead.leadId || t.lead?.id === lead.id);
+    const grouped = new Map<string, any[]>();
+    leadTxns.forEach((t) => {
+      const orderId = t.externalOrderId || t.externalTxnId || t.id || 'unknown';
+      if (!grouped.has(orderId)) grouped.set(orderId, []);
+      grouped.get(orderId)!.push(t);
+    });
+    validHistory = Array.from(grouped.entries()).map(([orderId, transactions]) => ({ orderId, transactions }));
+  }
+
+  const orders = validHistory;
   const interestedProducts = lead.interestedProducts || [];
   
   const availableProducts = products || [];

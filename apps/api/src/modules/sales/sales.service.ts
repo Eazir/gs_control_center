@@ -655,7 +655,7 @@ export class SalesService implements OnModuleInit {
           metadata: true,
           closerId: true,
           lead: {
-            select: { id: true, name: true, email: true, phone: true, closerId: true },
+            select: { id: true, name: true, email: true, phone: true, closerId: true, pipelineStage: true, situacion: true, interestedProducts: true },
           },
         },
       });
@@ -694,6 +694,9 @@ export class SalesService implements OnModuleInit {
             email: s.lead?.email || 'Sin Correo',
             phone: s.lead?.phone || null,
             closerId: s.lead?.closerId || null,
+            pipelineStage: s.lead?.pipelineStage || null,
+            situacion: s.lead?.situacion || null,
+            interestedProducts: s.lead?.interestedProducts || [],
           },
         };
       });
