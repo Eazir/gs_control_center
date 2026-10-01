@@ -138,8 +138,6 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
         method: 'POST',
         body: JSON.stringify({
           status: txnStatus || undefined,
-          pipelineStage: txnStage === 'NO_CHANGE' || !txnStage ? undefined : txnStage,
-          pipelineSubstatus: txnSubstatus === 'NO_CHANGE' || !txnSubstatus ? undefined : txnSubstatus,
         }),
       });
       if (res.ok) {
@@ -453,42 +451,6 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                                       <SelectItem value="PURCHASE_CHARGEBACK">Chargeback</SelectItem>
                                       <SelectItem value="PURCHASE_OUT_OF_SHOPPING_CART">Carrito Aband</SelectItem>
                                       <SelectItem value="PURCHASE_DELAYED">Retrasada</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                {pipelineStages && (
-                                  <div className="space-y-1">
-                                    <Label className="text-xs text-muted-foreground">Nueva Etapa en Pipeline</Label>
-                                    <Select value={txnStage} onValueChange={setTxnStage}>
-                                      <SelectTrigger className="h-8 text-xs bg-card">
-                                        <SelectValue placeholder="No cambiar etapa" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="NO_CHANGE">No cambiar etapa</SelectItem>
-                                        {pipelineStages.map(s => (
-                                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                )}
-                                <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">Nuevo Estado del Lead</Label>
-                                  <Select value={txnSubstatus} onValueChange={setTxnSubstatus}>
-                                    <SelectTrigger className="h-8 text-xs bg-card">
-                                      <SelectValue placeholder="No cambiar estado" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="NO_CHANGE">No cambiar estado</SelectItem>
-                                      <SelectItem value="POR PAGAR">POR PAGAR</SelectItem>
-                                      <SelectItem value="SEGUIMIENTO">SEGUIMIENTO</SelectItem>
-                                      <SelectItem value="NO RESPONDE">NO RESPONDE</SelectItem>
-                                      <SelectItem value="NO CALIFICA">NO CALIFICA</SelectItem>
-                                      <SelectItem value="YA HABIA ENTRADO">YA HABIA ENTRADO</SelectItem>
-                                      <SelectItem value="PAGO COMPLETO">PAGO COMPLETO</SelectItem>
-                                      <SelectItem value="PAGO A CUOTAS">PAGO A CUOTAS</SelectItem>
-                                      <SelectItem value="RESERVA">RESERVA</SelectItem>
-                                      <SelectItem value="SIN WSP">SIN WSP</SelectItem>
                                     </SelectContent>
                                   </Select>
                                 </div>

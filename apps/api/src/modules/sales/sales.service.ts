@@ -542,21 +542,22 @@ export class SalesService implements OnModuleInit {
 
   private determineStage(status: string, situacion: string | null = null, hasCloser: boolean = false): string {
     const sit = situacion || '';
+    const st = status ? status.toUpperCase().trim() : '';
     
     // Ganado
-    if (['PAGO_COMPLETO', 'PAGO_A_CUOTAS'].includes(sit) || ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE'].includes(status)) {
+    if (['PAGO_COMPLETO', 'PAGO_A_CUOTAS'].includes(sit) || ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO'].includes(st)) {
       return 'won';
     }
     // Perdido / Descartado
-    if (['NO_RESPONDE', 'NO_CALIFICA', 'SIN_WSP'].includes(sit) || ['REFUNDED', 'PURCHASE_REFUNDED'].includes(status)) {
+    if (['NO_RESPONDE', 'NO_CALIFICA', 'SIN_WSP'].includes(sit) || ['REFUNDED', 'PURCHASE_REFUNDED', 'REEMBOLSADO', 'REEMBOLSO'].includes(st)) {
       return 'lost';
     }
     // En recuperacion
-    if (['ABANDONED_CART', 'PURCHASE_OUT_OF_SHOPPING_CART', 'CHARGEBACK', 'PURCHASE_CHARGEBACK', 'DISPUTE', 'PURCHASE_PROTEST', 'CANCELED', 'PURCHASE_CANCELED', 'EXPIRED'].includes(status)) {
+    if (['ABANDONED_CART', 'PURCHASE_OUT_OF_SHOPPING_CART', 'CHARGEBACK', 'PURCHASE_CHARGEBACK', 'DISPUTE', 'PURCHASE_PROTEST', 'CANCELED', 'PURCHASE_CANCELED', 'EXPIRED', 'CANCELADO', 'CANCELADA', 'EXPIRADO'].includes(st) || st.includes('CARRITO') || st.includes('CHARGEBACK') || st.includes('DISPUTA')) {
       return 'recovery';
     }
     // En seguimiento
-    if (['SEGUIMIENTO', 'POR_PAGAR', 'RESERVA'].includes(sit) || ['WAITING_PAYMENT', 'DELAYED', 'PURCHASE_DELAYED', 'BILLET_PRINTED', 'PURCHASE_BILLET_PRINTED'].includes(status)) {
+    if (['SEGUIMIENTO', 'POR_PAGAR', 'RESERVA'].includes(sit) || ['WAITING_PAYMENT', 'DELAYED', 'PURCHASE_DELAYED', 'BILLET_PRINTED', 'PURCHASE_BILLET_PRINTED', 'ATRASADO'].includes(st) || st.includes('ESPERA DE') || st.includes('BOLETO')) {
       return 'followup';
     }
     // Sin contactar
@@ -568,30 +569,11 @@ export class SalesService implements OnModuleInit {
   }
 
   private determineSituacion(status: string): LeadSituacion | null {
-    switch (status) {
-      case 'APPROVED': 
-      case 'PURCHASE_APPROVED': 
-      case 'COMPLETE': 
-      case 'PURCHASE_COMPLETE':
-        return 'PAGO_COMPLETO';
-      case 'WAITING_PAYMENT':
-      case 'BILLET_PRINTED':
-      case 'PURCHASE_BILLET_PRINTED':
-        return 'POR_PAGAR';
-      case 'DELAYED':
-      case 'PURCHASE_DELAYED':
-      case 'ABANDONED_CART':
-      case 'PURCHASE_OUT_OF_SHOPPING_CART':
-      case 'CANCELED':
-      case 'PURCHASE_CANCELED':
-      case 'CHARGEBACK':
-      case 'PURCHASE_CHARGEBACK':
-      case 'EXPIRED':
-      case 'PURCHASE_PROTEST':
-        return 'SEGUIMIENTO';
-      default:
-        return null;
-    }
+    const st = status ? status.toUpperCase().trim() : '';
+    if (['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO'].includes(st)) return 'PAGO_COMPLETO';
+    if (['WAITING_PAYMENT', 'BILLET_PRINTED', 'PURCHASE_BILLET_PRINTED'].includes(st) || st.includes('ESPERA DE') || st.includes('BOLETO')) return 'POR_PAGAR';
+    if (['DELAYED', 'PURCHASE_DELAYED', 'ABANDONED_CART', 'PURCHASE_OUT_OF_SHOPPING_CART', 'CANCELED', 'PURCHASE_CANCELED', 'CHARGEBACK', 'PURCHASE_CHARGEBACK', 'EXPIRED', 'PURCHASE_PROTEST', 'CANCELADO', 'CANCELADA', 'EXPIRADO', 'ATRASADO'].includes(st) || st.includes('CARRITO') || st.includes('CHARGEBACK') || st.includes('DISPUTA')) return 'SEGUIMIENTO';
+    return null;
   }
 
 
@@ -1144,7 +1126,18 @@ export class SalesService implements OnModuleInit {
     }
 
     const updateData: import('@prisma/client').Prisma.SaleUpdateInput = {};
-    if (data.status !== undefined) updateData.status = data.status;
+    if (data.status !== undefined) {
+      updateData.status = data.status;
+      
+      // Deducir automáticamente la etapa y situación con base en el nuevo estado
+      const situacion = this.determineSituacion(data.status);
+      const pipelineStage = this.determineStage(data.status, situacion, !!sale.closerId);
+      
+      updateData.pipelineStage = pipelineStage;
+      updateData.pipelineSubstatus = situacion;
+    }
+    // Mantener esto por si en el futuro se quiere forzar manualmente desde otro lado,
+    // pero desde la UI de la transacción ahora solo enviamos `status`.
     if (data.pipelineStage !== undefined) updateData.pipelineStage = data.pipelineStage;
     if (data.pipelineSubstatus !== undefined) updateData.pipelineSubstatus = data.pipelineSubstatus;
 
@@ -1172,18 +1165,8 @@ export class SalesService implements OnModuleInit {
     };
 
     const statusChanged = data.status !== undefined && data.status !== sale.status;
-    let newLeadStage = data.pipelineStage;
-    let newLeadSituacion = this.determineSituacion(data.status || sale.status);
-
-    // Si la venta cambia a aprobada, automáticamente actualizar el stage a 'won'
-    if (statusChanged && data.status && ['APPROVED', 'COMPLETE', 'COMPLETED', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'].includes(data.status)) {
-      updateData.pipelineStage = 'won';
-      if (!updateData.pipelineSubstatus) updateData.pipelineSubstatus = 'PAGO COMPLETO';
-      newLeadStage = 'won';
-    } else if (statusChanged && data.status && ['REFUNDED', 'PURCHASE_REFUNDED', 'CHARGEBACK', 'PURCHASE_CHARGEBACK', 'CANCELED', 'PURCHASE_CANCELED'].includes(data.status)) {
-      updateData.pipelineStage = 'lost';
-      newLeadStage = 'lost';
-    }
+    const newLeadStage = updateData.pipelineStage || sale.pipelineStage;
+    const newLeadSituacion = updateData.pipelineSubstatus || sale.pipelineSubstatus;
 
     await this.prisma.$transaction(async (tx) => {
       // 1. Actualizar la transacción
@@ -1195,8 +1178,8 @@ export class SalesService implements OnModuleInit {
       // 2. Sincronizar el lead si cambió de estado o etapa
       if (statusChanged || newLeadStage) {
         const leadUpdateData: import('@prisma/client').Prisma.LeadUpdateInput = {};
-        if (newLeadStage) leadUpdateData.pipelineStage = newLeadStage;
-        if (newLeadSituacion) leadUpdateData.situacion = newLeadSituacion;
+        if (newLeadStage) leadUpdateData.pipelineStage = newLeadStage as string;
+        if (newLeadSituacion) leadUpdateData.situacion = newLeadSituacion as import('@prisma/client').LeadSituacion;
 
         if (Object.keys(leadUpdateData).length > 0) {
           await tx.lead.update({
@@ -1330,14 +1313,45 @@ export class SalesService implements OnModuleInit {
   async importSaleCsv(projectId: string, dto: CsvSaleImportDto, requestedBy: string) {
     // ── Resolución de closerId (fuera de la transacción para evitar abortos) ──
     let closerId: string | null = null;
-    if (dto.sck) {
+    
+    // 1. Buscar por código SCK (si el string enviado contiene alguno de los sckCodes del usuario)
+    if (dto.sck && dto.sck !== '(none)' && dto.sck !== 'null') {
       try {
-        const closerUser = await this.prisma.projectUser.findFirst({
-          where: { projectId, sckCodes: { has: dto.sck.trim() } },
+        const allClosers = await this.prisma.projectUser.findMany({
+          where: { projectId, roleInProject: 'CLOSER' }
         });
-        if (closerUser) closerId = closerUser.userId;
+        const normalizedSck = dto.sck.toLowerCase();
+        for (const closer of allClosers) {
+          if (closer.sckCodes.some(code => normalizedSck.includes(code.toLowerCase()))) {
+            closerId = closer.userId;
+            break;
+          }
+        }
       } catch {
-        // Ignorar si falla la búsqueda por SCK (ej. formato inválido)
+        // Ignorar
+      }
+    }
+
+    // 2. Si no encontró por SCK, buscar por nombre de afiliado
+    if (!closerId && dto.affiliateName && dto.affiliateName !== '(none)') {
+      try {
+        const allClosers = await this.prisma.projectUser.findMany({
+          where: { projectId, roleInProject: 'CLOSER' },
+          select: { userId: true }
+        });
+        if (allClosers.length > 0) {
+          const userIds = allClosers.map(c => c.userId);
+          const users = await this.prisma.user.findMany({
+            where: { id: { in: userIds } }
+          });
+          const normalizedAffiliate = dto.affiliateName.toLowerCase().trim();
+          const matchedUser = users.find(u => u.fullName.toLowerCase().includes(normalizedAffiliate));
+          if (matchedUser) {
+            closerId = matchedUser.id;
+          }
+        }
+      } catch {
+        // Ignorar
       }
     }
 
@@ -1351,21 +1365,23 @@ export class SalesService implements OnModuleInit {
     let finalCurrency = dto.currency ?? 'USD';
     let finalInstallments = dto.installments ?? 1;
 
-    if (dto.offerCode) {
-      try {
-        const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { products: true } });
-        const products = (project?.products as Array<{ id: string; name: string; price: number; offerCode?: string | null; currency?: string; installments?: number }>) || [];
-        const matchedProd = products.find(p => p.offerCode === dto.offerCode);
-        if (matchedProd) {
-          if (!dto.productName) finalProductName = matchedProd.name;
-          if (dto.amount === 0 || dto.amount === undefined) finalAmount = matchedProd.price;
-          if (!dto.currency || dto.currency === 'USD') finalCurrency = matchedProd.currency || 'USD';
-          if (dto.installments === 1 || dto.installments === undefined) finalInstallments = matchedProd.installments || 1;
-        }
-      } catch {
-        // Ignorar y usar fallbacks
-      }
+    if (!dto.offerCode) {
+      throw new Error(`El código de oferta es obligatorio para importar transacciones.`);
     }
+
+    const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { products: true } });
+    const products = (project?.products as Array<{ id: string; name: string; price: number; offerCode?: string | null; currency?: string; installments?: number }>) || [];
+    const normalizedOfferCode = dto.offerCode.trim().toLowerCase();
+    const matchedProd = products.find(p => p.offerCode?.trim().toLowerCase() === normalizedOfferCode);
+    
+    if (!matchedProd) {
+      throw new Error(`El código de oferta '${dto.offerCode}' no corresponde a ningún producto en el proyecto. Por favor, crea o actualiza el producto en Ajustes.`);
+    }
+
+    if (!dto.productName) finalProductName = matchedProd.name;
+    if (dto.amount === 0 || dto.amount === undefined) finalAmount = matchedProd.price;
+    if (!dto.currency || dto.currency === 'USD') finalCurrency = matchedProd.currency || 'USD';
+    if (dto.installments === 1 || dto.installments === undefined) finalInstallments = matchedProd.installments || 1;
 
     return withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
       // 3. Crear o actualizar Lead comprador (Priorizar Teléfono)
@@ -1421,8 +1437,25 @@ export class SalesService implements OnModuleInit {
 
 
       // 5. Crear o Actualizar Venta
-      const parsedDate = dto.date ? new Date(dto.date) : new Date();
-      const saleDate = isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+      let saleDate = new Date();
+      if (dto.date) {
+        const parts = dto.date.split(' ');
+        const datePart = parts[0] || '';
+        const timePart = parts[1] || '00:00:00';
+        if (datePart.includes('/')) {
+           const dParts = datePart.split('/');
+           if (dParts.length === 3) {
+              const day = parseInt(dParts[0] || '1', 10);
+              const month = parseInt(dParts[1] || '1', 10);
+              const year = parseInt(dParts[2] || '2000', 10);
+              const tentative = new Date(`${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}T${timePart}Z`);
+              if (!isNaN(tentative.getTime())) saleDate = tentative;
+           }
+        } else {
+           const tentative = new Date(dto.date);
+           if (!isNaN(tentative.getTime())) saleDate = tentative;
+        }
+      }
       const orderId = dto.externalOrderId || dto.externalTxnId;
 
       if (matchingSale) {

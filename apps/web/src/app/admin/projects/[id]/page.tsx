@@ -46,6 +46,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { AdminShell } from '@/components/layout/admin-shell';
+import { DashboardView } from '@/components/admin/projects/DashboardView';
 import { SalesView } from '@/components/admin/projects/SalesView';
 import { TransactionsView } from '@/components/admin/projects/TransactionsView';
 import { LeadDetailModal, LeadData } from '@/components/admin/projects/LeadDetailModal';
@@ -1654,6 +1655,7 @@ export default function ProjectDetailsPage() {
           )}
         </div>
 
+
         {/* ============================================================= */}
         {/* VISTA 1: PIPELINE (KANBAN DE ETAPAS Y PROSPECTOS)             */}
         {/* ============================================================= */}
@@ -2081,118 +2083,11 @@ export default function ProjectDetailsPage() {
         {/* VISTA 3: MÉTRICAS (DASHBOARD DE VENTAS Y KPIS)                */}
         {/* ============================================================= */}
         {mainView === 'metrics' && (
-          <div className="space-y-6 animate-in fade-in-50">
-            {/* Ribbon de métricas clave */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-              <Card className="p-4 bg-[#0B0D13] border-border space-y-1">
-                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <DollarSign size={13} className="text-emerald-400" />
-                  Facturación Ganada
-                </span>
-                <div className="text-xl font-bold font-mono text-emerald-400">
-                  ${metricsCalc.totalWon.toLocaleString()} USD
-                </div>
-                <span className="text-[10px] text-muted-foreground">Ventas cerradas en pipeline</span>
-              </Card>
-
-              <Card className="p-4 bg-[#0B0D13] border-border space-y-1">
-                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <Target size={13} className="text-primary" />
-                  Meta Mensual ({metricsCalc.progressPercent}%)
-                </span>
-                <div className="text-xl font-bold font-mono text-foreground">
-                  ${metricsCalc.targetRevenue.toLocaleString()} USD
-                </div>
-                <div className="w-full bg-card rounded-full h-1.5 mt-1 overflow-hidden">
-                  <div
-                    className="bg-primary h-full rounded-full transition-all"
-                    style={{ width: `${metricsCalc.progressPercent}%` }}
-                  />
-                </div>
-              </Card>
-
-              <Card className="p-4 bg-[#0B0D13] border-border space-y-1">
-                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <TrendingUp size={13} className="text-blue-400" />
-                  Tasa de Cierre
-                </span>
-                <div className="text-xl font-bold font-mono text-blue-400">
-                  {metricsCalc.conversionRate}%
-                </div>
-                <span className="text-[10px] text-muted-foreground">{metricsCalc.wonCount} cierres confirmados</span>
-              </Card>
-
-              <Card className="p-4 bg-[#0B0D13] border-border space-y-1">
-                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <Package size={13} className="text-purple-400" />
-                  Ticket Promedio
-                </span>
-                <div className="text-xl font-bold font-mono text-purple-400">
-                  ${metricsCalc.averageTicket.toLocaleString()} USD
-                </div>
-                <span className="text-[10px] text-muted-foreground">Por venta cerrada</span>
-              </Card>
-            </div>
-
-            {/* TABLA: RANKING DE RENDIMIENTO DE CLOSERS */}
-            <Card className="bg-[#0B0D13] border-border p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
-                    <Users size={16} className="text-primary" />
-                    Ranking de Rendimiento de Closers del Proyecto
-                  </h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Rendimiento individual, facturación generada y comisión devengada.
-                  </p>
-                </div>
-                <Badge variant="gold" className="text-xs">
-                  Comisión Base: {commissionConfigState.defaultCloserPercentage}%
-                </Badge>
-              </div>
-
-              <div className="rounded-xl border border-border overflow-hidden bg-card/20">
-                <Table>
-                  <TableHeader className="bg-card/60">
-                    <TableRow className="border-border/60">
-                      <TableHead className="text-[11px] font-bold">Closer</TableHead>
-                      <TableHead className="text-[11px] font-bold text-center">Leads Asignados</TableHead>
-                      <TableHead className="text-[11px] font-bold text-center">Ventas Cerradas</TableHead>
-                      <TableHead className="text-[11px] font-bold text-center">Tasa Conversión</TableHead>
-                      <TableHead className="text-[11px] font-bold text-right">Facturación Generada</TableHead>
-                      <TableHead className="text-[11px] font-bold text-right">Comisión Estimada</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {metricsCalc.closersRanking.map((closer, idx) => (
-                      <TableRow key={idx} className="border-border/40">
-                        <TableCell className="font-bold text-xs text-foreground py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-primary text-[10px]">
-                              {idx + 1}
-                            </span>
-                            {closer.closerName}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center font-mono text-xs py-3">{closer.calls}</TableCell>
-                        <TableCell className="text-center font-mono font-bold text-emerald-400 text-xs py-3">
-                          {closer.won}
-                        </TableCell>
-                        <TableCell className="text-center font-mono text-xs py-3">
-                          {closer.conversionRate}%
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-xs text-foreground py-3">
-                          ${closer.revenue.toLocaleString()} USD
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-xs text-primary py-3">
-                          ${closer.commission.toLocaleString()} USD
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </Card>
+          <div className="pt-2 pb-6">
+            <DashboardView 
+              projectId={projectId} 
+              effectiveRole={effectiveRole || ''}
+            />
           </div>
         )}
 

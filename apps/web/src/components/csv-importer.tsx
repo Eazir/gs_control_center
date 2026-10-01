@@ -30,8 +30,8 @@ const SALES_FIELDS = [
   { key: 'affiliateName', label: 'Afiliado (nombre no código) (Requerido)', required: true },
   { key: 'status', label: 'Estado de la transacción (Requerido)', required: true },
   { key: 'date', label: 'Fecha de transacción (Requerido)', required: true },
-  { key: 'leadName', label: 'Nombre del lead (Requerido)', required: true },
-  { key: 'leadEmail', label: 'Email del lead (Requerido)', required: true },
+  { key: 'leadName', label: 'Nombre del lead (Opcional)', required: false },
+  { key: 'leadEmail', label: 'Email del lead (Opcional)', required: false },
   { key: 'leadPhone', label: 'Teléfono del lead (Requerido)', required: true },
 ];
 

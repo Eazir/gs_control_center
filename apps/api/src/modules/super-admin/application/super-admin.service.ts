@@ -65,6 +65,16 @@ export class SuperAdminService {
 
       this.logger.warn(`Proyecto ${projectId} ha sido limpiado por SUPER_ADMIN.`);
     });
+
+    // Refrescar vistas materializadas para limpiar los datos en caché (debe ser fuera de la transacción)
+    try {
+      await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_project_daily_metrics;`);
+      await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_closer_daily_kpis;`);
+      await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_product_daily_kpis;`);
+      this.logger.log(`Vistas materializadas refrescadas tras limpieza de proyecto ${projectId}.`);
+    } catch (error) {
+      this.logger.error(`Error al refrescar vistas tras limpieza de proyecto ${projectId}:`, error);
+    }
   }
 
   /**
@@ -89,5 +99,15 @@ export class SuperAdminService {
       
       this.logger.warn(`Proyecto ${projectId} eliminado completamente por SUPER_ADMIN.`);
     });
+
+    // Refrescar vistas materializadas para limpiar los datos en caché (debe ser fuera de la transacción)
+    try {
+      await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_project_daily_metrics;`);
+      await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_closer_daily_kpis;`);
+      await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_product_daily_kpis;`);
+      this.logger.log(`Vistas materializadas refrescadas tras eliminación del proyecto ${projectId}.`);
+    } catch (error) {
+      this.logger.error(`Error al refrescar vistas tras eliminación de proyecto ${projectId}:`, error);
+    }
   }
 }

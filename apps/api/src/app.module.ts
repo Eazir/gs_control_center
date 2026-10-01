@@ -8,6 +8,7 @@ import { ProjectsModule } from './modules/projects';
 import { SalesModule } from './modules/sales';
 import { IntegrationsModule } from './modules/integrations';
 import { SuperAdminModule } from './modules/super-admin';
+import { KpiModule } from './modules/kpi/kpi.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { SuperAdminModule } from './modules/super-admin';
     SalesModule,
     IntegrationsModule,
     SuperAdminModule,
+    KpiModule,
   ],
 })
 export class AppModule {}

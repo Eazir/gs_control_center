@@ -71,8 +71,8 @@ export type CsvLeadImportDto = z.infer<typeof CsvLeadImportSchema>;
 
 export const CsvSaleImportSchema = z.object({
   date: z.string().min(1, 'La fecha es requerida'),
-  leadName: z.string().min(1, 'El nombre es requerido'),
-  leadEmail: z.string().email('Email inválido para importación'),
+  leadName: z.string().optional(),
+  leadEmail: z.string().email('Email inválido para importación').optional().or(z.literal('')),
   leadPhone: z.string().min(1, 'El teléfono es requerido'),
   offerCode: z.string().min(1, 'El código de oferta es requerido'),
   status: z.string().min(1, 'El estado de la transacción es requerido'),
