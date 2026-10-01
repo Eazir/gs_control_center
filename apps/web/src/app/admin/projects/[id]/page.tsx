@@ -43,6 +43,7 @@ import {
   Activity,
   User,
   UploadCloud,
+  RefreshCw,
 } from 'lucide-react';
 import { AdminShell } from '@/components/layout/admin-shell';
 import { SalesView } from '@/components/admin/projects/SalesView';
@@ -178,6 +179,7 @@ export default function ProjectDetailsPage() {
   // Modal Profile
   const [selectedLead, setSelectedLead] = useState<LeadData | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<TransactionData | null>(null);
+  const [allProjectTransactions, setAllProjectTransactions] = useState<TransactionData[]>([]);
 
   // Pagination for Leads Base
   const [leadsPage, setLeadsPage] = useState(1);
@@ -289,6 +291,7 @@ export default function ProjectDetailsPage() {
   // ESTADO DE LEADS (MOCK / DEMO DEL PIPELINE Y BASE DE LEADS)
   const [leads, setLeads] = useState<ProjectLead[]>([]); // Para el Kanban (Transacciones separadas)
   const [baseLeads, setBaseLeads] = useState<ProjectLead[]>([]); // Para la Tabla (Agrupado por persona)
+  const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   
   const [leadSearch, setLeadSearch] = useState('');
   const [closerFilter, setCloserFilter] = useState('ALL');
@@ -427,18 +430,25 @@ export default function ProjectDetailsPage() {
   }, [projectId]);
 
   const loadLeads = useCallback(async () => {
+    setIsLoadingLeads(true);
     if (!projectId) return;
     try {
-      const [salesRes, leadsRes] = await Promise.all([
+      const [salesRes, leadsRes, txRes] = await Promise.all([
         fetchWithAuth(`/sales/project/${projectId}`),
-        fetchWithAuth(`/sales/project/${projectId}/leads`)
+        fetchWithAuth(`/sales/project/${projectId}/leads`),
+        fetchWithAuth(`/sales/project/${projectId}/transactions`)
       ]);
+
+      if (txRes.ok) {
+        const txData = await txRes.json();
+        setAllProjectTransactions(Array.isArray(txData) ? txData : []);
+      }
 
       if (salesRes.ok) {
         const data = await salesRes.json();
         const sales = Array.isArray(data) ? data : [];
         const mappedOpportunities = sales.map((sale: any) => ({
-          id: sale.id, // Kanban drag-and-drop will now use sale.id instead of lead.id
+          id: sale.lead?.id || sale.id, // Kanban drag-and-drop requires lead.id to update correctly
           leadId: sale.lead?.id,
           fullName: sale.lead?.name || 'Sin Nombre',
           email: sale.lead?.email || 'Sin Correo',
@@ -487,6 +497,8 @@ export default function ProjectDetailsPage() {
     } catch {
       setLeads([]);
       setBaseLeads([]);
+    } finally {
+      setIsLoadingLeads(false);
     }
   }, [projectId]);
 
@@ -1566,6 +1578,9 @@ export default function ProjectDetailsPage() {
           >
             <Database size={15} />
             <span>Base de Leads</span>
+            <Badge variant="gold" className="ml-1 text-[10px] px-1.5 py-0 h-4">
+              {baseLeads.length}
+            </Badge>
           </button>
 
           <button
@@ -1652,6 +1667,10 @@ export default function ProjectDetailsPage() {
                   </Select>
                 </div>
 
+                <Button variant="outline" size="sm" onClick={() => loadLeads()} className="h-8 text-xs border-border/80 ml-2" disabled={isLoadingLeads}>
+                  <RefreshCw size={14} className={`mr-2 ${isLoadingLeads ? 'animate-spin' : ''}`} />
+                  Refrescar
+                </Button>
               </div>
 
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -1880,6 +1899,16 @@ export default function ProjectDetailsPage() {
                 <Button
                   variant="outline"
                   size="sm"
+                  onClick={() => loadLeads()}
+                  disabled={isLoadingLeads}
+                  className="text-xs h-9 border-border text-foreground hover:bg-muted"
+                >
+                  <RefreshCw size={13} className={`mr-1 ${isLoadingLeads ? 'animate-spin' : ''}`} />
+                  Refrescar
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setIsLeadImportModalOpen(true)}
                   className="text-xs h-9 border-border text-foreground hover:bg-muted"
                 >
@@ -2029,7 +2058,7 @@ export default function ProjectDetailsPage() {
         {/* MODAL: IMPORTACIÓN CSV DE LEADS                               */}
         {/* ============================================================= */}
         <Dialog open={isLeadImportModalOpen} onOpenChange={setIsLeadImportModalOpen}>
-          <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 overflow-hidden">
+          <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 overflow-y-auto max-h-[90vh]">
             <CsvImporter 
               projectId={projectId}
               mode="leads" 
@@ -2775,7 +2804,6 @@ export default function ProjectDetailsPage() {
                             <TableRow key={p.id} className="border-border/40">
                               <TableCell className="font-semibold text-xs py-2 text-foreground">
                                 {p.name}
-                                {p.ownerCloserId && <span className="block text-[10px] text-blue-400">Propietario: {allUsers.find(u => u.id === p.ownerCloserId)?.fullName || p.ownerCloserId}</span>}
                                 {p.isMarketing && <span className="block text-[10px] text-purple-400">Marketing</span>}
                               </TableCell>
                               <TableCell className="text-xs font-mono text-muted-foreground py-2">{p.offerCode || '—'}</TableCell>
@@ -2927,25 +2955,6 @@ export default function ProjectDetailsPage() {
                                   <SelectItem value="EUR">EUR (€)</SelectItem>
                                   <SelectItem value="MXN">MXN ($)</SelectItem>
                                   <SelectItem value="COP">COP ($)</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="space-y-1">
-                              <Label className="text-[11px] text-muted-foreground">Closer Propietario (Opcional)</Label>
-                              <Select value={newProdOwnerCloserId || 'none'} onValueChange={(val) => setNewProdOwnerCloserId(val === 'none' ? '' : val)}>
-                                <SelectTrigger className="bg-[#0B0D13] text-xs h-9">
-                                  <SelectValue placeholder="-- Sin asignar --" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">-- Sin asignar --</SelectItem>
-                                  {activeClosersInProject.map((m) => (
-                                    <SelectItem key={m.userId} value={m.userId}>
-                                      {m.userName || m.userId}
-                                    </SelectItem>
-                                  ))}
                                 </SelectContent>
                               </Select>
                             </div>
@@ -3776,6 +3785,7 @@ export default function ProjectDetailsPage() {
           isOpen={!!selectedTransaction}
           onClose={() => setSelectedTransaction(null)}
           transaction={selectedTransaction}
+          allTransactions={allProjectTransactions}
         />
       </div>
     </AdminShell>

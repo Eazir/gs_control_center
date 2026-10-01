@@ -148,12 +148,36 @@ export class SalesService implements OnModuleInit {
       }
 
       // 2. Buscar transacción previa para determinar si es nueva o actualización
-      const existingSale = await this.prisma.sale.findFirst({
+      let existingSale = await this.prisma.sale.findFirst({
         where: {
           source: rawSale.source,
           externalOrderId: rawSale.externalOrderId,
         },
       });
+
+      // Recuperación de carritos abandonados:
+      // Si la transacción actual NO es de carrito y no se encontró por ID (compra nueva),
+      // buscamos si existe un carrito abandonado previo del mismo lead (email) y mismo producto o código de oferta.
+      if (!existingSale && rawSale.status !== 'PURCHASE_OUT_OF_SHOPPING_CART' && rawSale.leadEmail) {
+        const abandonedCart = await this.prisma.sale.findFirst({
+          where: {
+            projectId: event.projectId,
+            status: 'PURCHASE_OUT_OF_SHOPPING_CART',
+            lead: { email: rawSale.leadEmail },
+            OR: [
+              ...(rawSale.productId ? [{ productId: rawSale.productId }] : []),
+              ...(rawSale.offerCode ? [{ offerCode: rawSale.offerCode }] : []),
+              { productName: rawSale.productName }
+            ]
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+
+        if (abandonedCart) {
+          existingSale = abandonedCart;
+          this.logger.log(`[ABANDONED_CART_RECOVERY] Adoptando carrito abandonado ${abandonedCart.externalOrderId} por nueva transacción ${rawSale.externalOrderId}`);
+        }
+      }
 
       // Idempotencia estricta: si ya existe una transacción con el mismo ID Y el mismo estado,
       // es un evento duplicado literal y se descarta sin procesar.
@@ -240,13 +264,13 @@ export class SalesService implements OnModuleInit {
 
         if (!matchedProduct) {
           this.logger.warn(
-            `[DESCARTE] Código de oferta '${rawSale.offerCode}' no corresponde a ningún producto ACTIVO en el proyecto ${event.projectId}.`
+            `[DESCARTE] Código de oferta '${rawSale.offerCode}' no corresponde a ningún producto ACTIVO en el proyecto ${event.projectId}. Descartando.`
           );
           await this.prisma.integrationEvent.update({
             where: { id: eventId },
             data: {
               status: EventStatus.SKIPPED_UNKNOWN_PRODUCT,
-              errorReason: `El código de oferta '${rawSale.offerCode}' no coincide con ningún producto activo del proyecto`,
+              errorReason: `Producto o código de oferta (${rawSale.offerCode}) no registrado en el catálogo del proyecto`,
               processedAt: new Date(),
             },
           });
@@ -256,12 +280,10 @@ export class SalesService implements OnModuleInit {
       }
 
       // 4. Atribución de closer:
-      // Prioridad 1: El producto tiene ownerCloserId asignado en el catálogo del proyecto.
-      // Prioridad 2: El SCK del webhook coincide con el SCK de algún miembro del proyecto (buscando por username, email o UUID).
-      // Si no hay ningún closer => Atribución Marketing (venta orgánica desde campaña o sin asignación).
-      let closerId: string | null = matchedProduct?.ownerCloserId || null;
+      // Única vía: El SCK del webhook coincide con el SCK de algún miembro del proyecto.
+      let closerId: string | null = null;
 
-      if (!closerId && rawSale.sck && !matchedProduct?.isMarketing) {
+      if (rawSale.sck && !matchedProduct?.isMarketing) {
         try {
           const sck = rawSale.sck.trim();
           const closerUser = await this.prisma.projectUser.findFirst({
@@ -285,7 +307,7 @@ export class SalesService implements OnModuleInit {
         const affiliates = rawSale.affiliates || [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const hasReynald = affiliates.some((a: any) => 
-          a?.affiliate_code === 'B100311196F' || (a?.name && a.name.includes('Reynald'))
+          a?.affiliate_code === 'B100311196F' && a?.name && a.name.includes('Reynald')
         );
         if (hasReynald) {
           attribution = 'COMERCIAL'; // Ventas equipo comercial sin closer, suman facturación pero sin comisión
@@ -395,9 +417,9 @@ export class SalesService implements OnModuleInit {
             this.logger.log(`[CUOTA] Sumando cuota ${rawSale.recurrencyNumber} a venta ${existingSale.externalTxnId}. Nuevo monto: ${newAmount}`);
           } else if (existingSale.status !== rawSale.status || currentHistory.length === 0) {
             if (currentHistory.length === 0) {
-              newHistory = [this.buildHistoryEvent('STATUS_CHANGE', { status: existingSale.status, timestamp: existingSale.createdAt })];
+              newHistory = [this.buildHistoryEvent('STATUS_CHANGE', { status: existingSale.status, timestamp: existingSale.createdAt, authorName: 'Hotmart' })];
             }
-            newHistory = [...newHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status })];
+            newHistory = [...newHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, authorName: 'Hotmart' })];
           }
 
           const newMetadata = {
@@ -410,6 +432,8 @@ export class SalesService implements OnModuleInit {
           await tx.sale.update({
             where: { id: existingSale.id },
             data: {
+              externalOrderId: rawSale.externalOrderId,
+              externalTxnId: rawSale.externalTxnId,
               status: rawSale.status,
               amount: newAmount,
               currency: officialCurrency,
@@ -432,7 +456,7 @@ export class SalesService implements OnModuleInit {
           // Adoptar Venta Manual
           const currentMetadata = (manualSaleToAdopt.metadata as Record<string, unknown>) || {};
           const currentHistory = Array.isArray(currentMetadata.history) ? currentMetadata.history : [];
-          const newHistory = [...currentHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt })];
+          const newHistory = [...currentHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt, authorName: 'Hotmart' })];
           
           const newMetadata = {
             ...currentMetadata,
@@ -466,7 +490,7 @@ export class SalesService implements OnModuleInit {
           const initialMetadata = {
             ...(rawSale.metadata ? (rawSale.metadata as object) : {}),
             attribution,
-            history: [this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt })],
+            history: [this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt, authorName: 'Hotmart' })],
           };
 
           await tx.sale.create({
@@ -520,19 +544,19 @@ export class SalesService implements OnModuleInit {
     const sit = situacion || '';
     
     // Ganado
-    if (['PAGO_COMPLETO', 'PAGO_A_CUOTAS'].includes(sit) || ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE'].includes(status)) {
+    if (['PAGO_COMPLETO', 'PAGO_A_CUOTAS'].includes(sit) || ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE'].includes(status)) {
       return 'won';
     }
     // Perdido / Descartado
-    if (['NO_RESPONDE', 'NO_CALIFICA', 'SIN_WSP'].includes(sit) || ['REFUNDED'].includes(status)) {
+    if (['NO_RESPONDE', 'NO_CALIFICA', 'SIN_WSP'].includes(sit) || ['REFUNDED', 'PURCHASE_REFUNDED'].includes(status)) {
       return 'lost';
     }
     // En recuperacion
-    if (['ABANDONED_CART', 'CHARGEBACK', 'DISPUTE', 'CANCELED', 'EXPIRED'].includes(status)) {
+    if (['ABANDONED_CART', 'PURCHASE_OUT_OF_SHOPPING_CART', 'CHARGEBACK', 'PURCHASE_CHARGEBACK', 'DISPUTE', 'PURCHASE_PROTEST', 'CANCELED', 'PURCHASE_CANCELED', 'EXPIRED'].includes(status)) {
       return 'recovery';
     }
     // En seguimiento
-    if (['SEGUIMIENTO', 'POR_PAGAR', 'RESERVA'].includes(sit) || ['WAITING_PAYMENT', 'DELAYED', 'BILLET_PRINTED'].includes(status)) {
+    if (['SEGUIMIENTO', 'POR_PAGAR', 'RESERVA'].includes(sit) || ['WAITING_PAYMENT', 'DELAYED', 'PURCHASE_DELAYED', 'BILLET_PRINTED', 'PURCHASE_BILLET_PRINTED'].includes(status)) {
       return 'followup';
     }
     // Sin contactar
@@ -548,15 +572,22 @@ export class SalesService implements OnModuleInit {
       case 'APPROVED': 
       case 'PURCHASE_APPROVED': 
       case 'COMPLETE': 
+      case 'PURCHASE_COMPLETE':
         return 'PAGO_COMPLETO';
       case 'WAITING_PAYMENT':
       case 'BILLET_PRINTED':
+      case 'PURCHASE_BILLET_PRINTED':
         return 'POR_PAGAR';
       case 'DELAYED':
+      case 'PURCHASE_DELAYED':
       case 'ABANDONED_CART':
+      case 'PURCHASE_OUT_OF_SHOPPING_CART':
       case 'CANCELED':
+      case 'PURCHASE_CANCELED':
       case 'CHARGEBACK':
+      case 'PURCHASE_CHARGEBACK':
       case 'EXPIRED':
+      case 'PURCHASE_PROTEST':
         return 'SEGUIMIENTO';
       default:
         return null;
@@ -593,7 +624,7 @@ export class SalesService implements OnModuleInit {
 
       const whereClause: import('@prisma/client').Prisma.SaleWhereInput = { 
         projectId,
-        status: { in: ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED'] } 
+        status: { in: ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'] } 
       };
       
       // Aplicar filtro de aislamiento si el rol global del usuario es CLOSER
@@ -711,7 +742,7 @@ export class SalesService implements OnModuleInit {
           metadata: true,
           closerId: true,
           lead: {
-            select: { id: true, name: true, email: true, phone: true, closerId: true },
+            select: { id: true, name: true, email: true, phone: true, closerId: true, situacion: true, interestedProducts: true },
           },
         },
       });
@@ -750,6 +781,8 @@ export class SalesService implements OnModuleInit {
             email: t.lead?.email || 'Sin Correo',
             phone: t.lead?.phone || null,
             closerId: t.lead?.closerId || null,
+            situacion: t.lead?.situacion || null,
+            interestedProducts: t.lead?.interestedProducts?.map((ip) => ip.productId) || [],
           },
         };
       });
@@ -855,19 +888,26 @@ export class SalesService implements OnModuleInit {
       whereClause.closerId = user.id;
     }
 
-    const leads = await this.prisma.lead.findMany({
-      where: whereClause,
-      include: {
-        sales: {
-          orderBy: { createdAt: 'desc' },
+    const [leads, project] = await Promise.all([
+      this.prisma.lead.findMany({
+        where: whereClause,
+        include: {
+          sales: {
+            orderBy: { createdAt: 'desc' },
+          },
+          interestedProducts: true,
         },
-        interestedProducts: true,
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
+        orderBy: { updatedAt: 'desc' },
+      }),
+      this.prisma.project.findUnique({
+        where: { id: projectId },
+        select: { products: true }
+      })
+    ]);
+    const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
 
     return leads.map(lead => {
-      const EFFECTIVE_STATUSES = ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED'];
+      const EFFECTIVE_STATUSES = ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'];
       // El valor estimado se calcula solo sobre ventas efectivas (aprobadas)
       const effectiveSales = lead.sales.filter(s => EFFECTIVE_STATUSES.includes(s.status));
       // Si hay ventas efectivas, tomar la más reciente; si no, tomar la última transacción cualquiera para mostrar info del producto
@@ -898,6 +938,7 @@ export class SalesService implements OnModuleInit {
           id: s.id,
           status: s.status,
           externalTxnId: s.externalTxnId,
+          externalOrderId: s.externalOrderId,
           productName: s.productName,
           amount: Number(s.amount),
           createdAt: s.createdAt.toISOString(),
@@ -915,6 +956,7 @@ export class SalesService implements OnModuleInit {
         email: lead.email,
         phone: lead.phone || '',
         stageId: lead.pipelineStage || 'uncontacted',
+        situacion: lead.situacion,
         lastContact: lead.updatedAt.toISOString(),
         estimatedValue,
         productName: representativeSale?.productName || firstProductName,
@@ -923,7 +965,10 @@ export class SalesService implements OnModuleInit {
         installments: representativeSale?.installments || 1,
         offerCode: representativeSale?.offerCode || undefined,
         attribution,
-        interestedProducts: lead.interestedProducts.map(ip => ip.productId),
+        interestedProducts: lead.interestedProducts.map(ip => {
+          const match = projectProducts.find(p => p.id === ip.productId);
+          return match ? match.name : ip.productId;
+        }),
         latestTransaction: representativeSale ? {
           id: representativeSale.id,
           status: representativeSale.status,
@@ -1067,8 +1112,9 @@ export class SalesService implements OnModuleInit {
             },
             update: {}
           });
-        } catch {
-          // Ignorar silenciosamente si hay error al vincular el producto
+        } catch (err) {
+          // Log error para depurar por qué no se inserta
+          this.logger.error('Error insertando producto de interes:', err);
         }
       }
     });
@@ -1111,7 +1157,8 @@ export class SalesService implements OnModuleInit {
     if (currentHistory.length === 0) {
        currentHistory = [this.buildHistoryEvent('STATUS_CHANGE', { status: sale.status, timestamp: sale.createdAt })];
     }
-    const updateEvent = this.buildHistoryEvent('MANUAL_UPDATE', { 
+    const updateEvent = this.buildHistoryEvent('STATUS_CHANGE', { 
+      status: updateData.status as string || sale.status,
       authorName, 
       changes: updateData 
     });
@@ -1122,18 +1169,39 @@ export class SalesService implements OnModuleInit {
     };
 
     const statusChanged = data.status !== undefined && data.status !== sale.status;
+    let newLeadStage = data.pipelineStage;
+    let newLeadSituacion = this.determineSituacion(data.status || sale.status);
 
     // Si la venta cambia a aprobada, automáticamente actualizar el stage a 'won'
-    if (statusChanged && data.status && ['APPROVED', 'COMPLETE', 'COMPLETED', 'PURCHASE_APPROVED'].includes(data.status)) {
+    if (statusChanged && data.status && ['APPROVED', 'COMPLETE', 'COMPLETED', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'].includes(data.status)) {
       updateData.pipelineStage = 'won';
       if (!updateData.pipelineSubstatus) updateData.pipelineSubstatus = 'PAGO COMPLETO';
-    } else if (statusChanged && data.status && ['REFUNDED', 'CHARGEBACK', 'CANCELED'].includes(data.status)) {
+      newLeadStage = 'won';
+    } else if (statusChanged && data.status && ['REFUNDED', 'PURCHASE_REFUNDED', 'CHARGEBACK', 'PURCHASE_CHARGEBACK', 'CANCELED', 'PURCHASE_CANCELED'].includes(data.status)) {
       updateData.pipelineStage = 'lost';
+      newLeadStage = 'lost';
     }
 
-    await this.prisma.sale.update({
-      where: { id: sale.id },
-      data: updateData
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Actualizar la transacción
+      await tx.sale.update({
+        where: { id: sale.id },
+        data: updateData
+      });
+
+      // 2. Sincronizar el lead si cambió de estado o etapa
+      if (statusChanged || newLeadStage) {
+        const leadUpdateData: import('@prisma/client').Prisma.LeadUpdateInput = {};
+        if (newLeadStage) leadUpdateData.pipelineStage = newLeadStage;
+        if (newLeadSituacion) leadUpdateData.situacion = newLeadSituacion;
+
+        if (Object.keys(leadUpdateData).length > 0) {
+          await tx.lead.update({
+            where: { id: sale.leadId },
+            data: leadUpdateData
+          });
+        }
+      }
     });
 
     return { success: true };

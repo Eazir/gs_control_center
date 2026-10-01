@@ -29,24 +29,26 @@ export class HotmartAdapter {
     // 2. Evento y estado
     const rawEvent = String(payload['event'] || purchase['status'] || '').toUpperCase();
     let status = 'PENDING';
-    if (rawEvent === 'COMPLETE' || rawEvent === 'COMPLETED') {
-      status = 'COMPLETE';
-    } else if (rawEvent === 'PURCHASE_APPROVED') {
+    if (rawEvent === 'COMPLETE' || rawEvent === 'COMPLETED' || rawEvent === 'PURCHASE_COMPLETE') {
+      status = 'PURCHASE_COMPLETE';
+    } else if (rawEvent === 'PURCHASE_APPROVED' || rawEvent.includes('APPROVED')) {
       status = 'PURCHASE_APPROVED';
-    } else if (rawEvent.includes('APPROVED')) {
-      status = 'APPROVED';
-    } else if (rawEvent.includes('REFUND')) {
-      status = 'REFUNDED';
-    } else if (rawEvent.includes('CHARGEBACK')) {
-      status = 'CHARGEBACK';
-    } else if (rawEvent.includes('CANCEL')) {
-      status = 'CANCELED';
-    } else if (rawEvent.includes('BILLET') || rawEvent.includes('PRINTED')) {
-      status = 'BILLET_PRINTED';
-    } else if (rawEvent.includes('DELAYED')) {
-      status = 'DELAYED';
-    } else if (rawEvent.includes('SHOPPING_CART') || rawEvent.includes('ABANDON')) {
-      status = 'ABANDONED_CART';
+    } else if (rawEvent === 'PURCHASE_CANCELED' || rawEvent.includes('CANCEL')) {
+      status = 'PURCHASE_CANCELED';
+    } else if (rawEvent === 'PURCHASE_BILLET_PRINTED' || rawEvent.includes('BILLET') || rawEvent.includes('PRINTED')) {
+      status = 'PURCHASE_BILLET_PRINTED';
+    } else if (rawEvent === 'PURCHASE_REFUNDED' || rawEvent.includes('REFUND')) {
+      status = 'PURCHASE_REFUNDED';
+    } else if (rawEvent === 'PURCHASE_CHARGEBACK' || rawEvent.includes('CHARGEBACK')) {
+      status = 'PURCHASE_CHARGEBACK';
+    } else if (rawEvent === 'PURCHASE_PROTEST' || rawEvent.includes('PROTEST') || rawEvent.includes('DISPUTE')) {
+      status = 'PURCHASE_PROTEST';
+    } else if (rawEvent === 'PURCHASE_DELAYED' || rawEvent.includes('DELAYED')) {
+      status = 'PURCHASE_DELAYED';
+    } else if (rawEvent === 'PURCHASE_OUT_OF_SHOPPING_CART' || rawEvent.includes('SHOPPING_CART') || rawEvent.includes('ABANDON')) {
+      status = 'PURCHASE_OUT_OF_SHOPPING_CART';
+    } else {
+      status = rawEvent;
     }
 
     // 3. Identificación de transacción (Orden global vs transacción de cuota/pago)
@@ -95,6 +97,7 @@ export class HotmartAdapter {
     // Soporta: purchase.origin.sck, purchase.sckPaymentLink, purchase.tracking.source_sck, y payload raíz
     const sck = 
       (origin['sck'] as string) || 
+      (purchase['sck'] as string) || 
       (purchase['sckPaymentLink'] as string) || 
       (tracking['source_sck'] as string) || 
       (tracking['sck'] as string) || 

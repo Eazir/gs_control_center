@@ -222,7 +222,7 @@ export function CsvImporter({ projectId, mode, onClose, onImport }: CsvImporterP
     : 0;
 
   return (
-    <div className="w-full p-6">
+    <div className="w-full p-6 max-h-[85vh] overflow-y-auto">
       {step === 1 && (
         <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-border/60 rounded-xl bg-muted/20">
           <UploadCloud className="w-12 h-12 text-muted-foreground mb-4" />

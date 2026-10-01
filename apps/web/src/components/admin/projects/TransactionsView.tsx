@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { TransactionDetailModal } from './TransactionDetailModal';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { CsvImporter } from '@/components/csv-importer';
+import { getNaturalStatusName, getStatusBadgeClasses } from '@/lib/status-utils';
 
 export interface TransactionsViewProps {
   projectId: string;
@@ -74,25 +75,9 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
   }, [transactions, searchTerm]);
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'PURCHASE_APPROVED':
-        return <Badge variant="outline" className="bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30">COMPRA APROBADA</Badge>;
-      case 'APPROVED':
-        return <Badge variant="outline" className="bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30">APROBADA</Badge>;
-      case 'COMPLETE':
-        return <Badge variant="outline" className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">COMPLETADA</Badge>;
-      case 'PENDING':
-      case 'WAITING_PAYMENT':
-      case 'BILLET_PRINTED':
-        return <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/20">{status}</Badge>;
-      case 'REFUNDED':
-      case 'CHARGEBACK':
-      case 'CANCELED':
-      case 'EXPIRED':
-        return <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">{status}</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
+    const naturalName = getNaturalStatusName(status);
+    const classes = getStatusBadgeClasses(status);
+    return <Badge variant="outline" className={classes}>{naturalName}</Badge>;
   };
 
   const formatMoney = (amount: number, currency: string) => {
@@ -240,7 +225,7 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
       
       {/* MODAL: IMPORTAR CSV */}
       <Dialog open={isImportModalOpen} onOpenChange={setIsImportModalOpen}>
-        <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 overflow-hidden">
+        <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 max-h-[90vh] overflow-y-auto">
           <CsvImporter 
             projectId={projectId}
             mode="sales" 
@@ -256,6 +241,7 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
         isOpen={!!selectedTxn}
         onClose={() => setSelectedTxn(null)}
         transaction={selectedTxn}
+        allTransactions={transactions}
       />
     </div>
   );

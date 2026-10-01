@@ -26,6 +26,7 @@ export async function fetchWithAuth(
   }
 
   let res = await fetch(url, {
+    cache: 'no-store', // Prevenir cacheo agresivo en Next.js App Router
     ...options,
     headers,
     credentials: 'include',

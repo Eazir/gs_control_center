@@ -17,6 +17,7 @@ import {
   Package
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/api-client';
+import { getNaturalStatusName, getStatusBadgeClasses } from '@/lib/status-utils';
 
 export interface LeadData {
   id: string; 
@@ -45,7 +46,7 @@ export interface LeadDetailProps {
   projectId?: string;
   activeClosers?: { id: string; name: string }[];
   pipelineStages?: { id: string; name: string }[];
-  products?: { id: string; name: string; ownerCloserId?: string | null }[];
+  products?: { id: string; name: string; ownerCloserId?: string | null | undefined }[];
   onSave?: () => void;
 }
 
@@ -116,7 +117,13 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
       if (resContact.ok && resStage.ok) {
         setIsEditingContact(false);
         onSave?.();
+      } else {
+        const errContact = 'text' in resContact && typeof resContact.text === 'function' ? await resContact.text().catch(() => 'Error Contact') : 'Error Contact';
+        const errStage = 'text' in resStage && typeof resStage.text === 'function' ? await resStage.text().catch(() => 'Error Stage') : 'Error Stage';
+        alert(`Error al guardar: ${!resContact.ok ? errContact : ''} ${!resStage.ok ? errStage : ''}`);
       }
+    } catch (e) {
+      alert('Ocurrió un error inesperado al guardar.');
     } finally {
       setIsSaving(false);
     }
@@ -146,13 +153,7 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
   const orders = lead.history && lead.history.length > 0 ? lead.history : [];
   const interestedProducts = lead.interestedProducts || [];
   
-  // Filter products by closerId if the lead has a closer assigned
-  const availableProducts = products?.filter(p => {
-    if (closerId && closerId !== 'unassigned') {
-      return p.ownerCloserId === closerId;
-    }
-    return true; // if no closer assigned, show all
-  }) || [];
+  const availableProducts = products || [];
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -187,21 +188,21 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                 <div className="space-y-3">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Nombre</Label>
-                    <Input value={name} onChange={e => setName(e.target.value)} className="h-8 text-xs bg-card text-foreground" />
+                    <Input value={name} onChange={e => setName(e.target.value)} className="h-8 text-xs bg-background/50 border-input text-white" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Email</Label>
-                    <Input value={email} onChange={e => setEmail(e.target.value)} className="h-8 text-xs bg-card text-foreground" />
+                    <Input value={email} onChange={e => setEmail(e.target.value)} className="h-8 text-xs bg-background/50 border-input text-white" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Teléfono</Label>
-                    <Input value={phone} onChange={e => setPhone(e.target.value)} className="h-8 text-xs bg-card text-foreground" />
+                    <Input value={phone} onChange={e => setPhone(e.target.value)} className="h-8 text-xs bg-background/50 border-input text-white" />
                   </div>
 
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Etapa en el Pipeline</Label>
                     <Select value={stageId} onValueChange={setStageId}>
-                      <SelectTrigger className="h-8 text-xs bg-card text-foreground">
+                      <SelectTrigger className="h-8 text-xs bg-background/50 border-input text-white">
                         <SelectValue placeholder="Seleccionar etapa" />
                       </SelectTrigger>
                       <SelectContent>
@@ -215,7 +216,7 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Situación</Label>
                     <Select value={situacion} onValueChange={setSituacion}>
-                      <SelectTrigger className="h-8 text-xs bg-card text-foreground">
+                      <SelectTrigger className="h-8 text-xs bg-background/50 border-input text-white">
                         <SelectValue placeholder="Seleccionar situación" />
                       </SelectTrigger>
                       <SelectContent>
@@ -237,7 +238,7 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground">Producto de Interés a agregar</Label>
                       <Select value={productOfInterest} onValueChange={setProductOfInterest}>
-                        <SelectTrigger className="h-8 text-xs bg-card text-foreground">
+                        <SelectTrigger className="h-8 text-xs bg-background/50 border-input text-white">
                           <SelectValue placeholder="Seleccionar producto" />
                         </SelectTrigger>
                         <SelectContent>
@@ -254,7 +255,7 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground">Closer Asignado</Label>
                       <Select value={closerId || 'unassigned'} onValueChange={setCloserId}>
-                        <SelectTrigger className="h-8 text-xs bg-card text-foreground">
+                        <SelectTrigger className="h-8 text-xs bg-background/50 border-input text-white">
                           <SelectValue placeholder="Seleccionar closer" />
                         </SelectTrigger>
                         <SelectContent>
@@ -317,6 +318,12 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                     <span className="text-muted-foreground">Closer Asignado:</span>
                     <span className="font-medium text-right">{lead.closerName || 'Sin asignar'}</span>
                   </div>
+                  {interestedProducts && interestedProducts.length > 0 && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Producto(s) de Interés:</span>
+                      <span className="font-medium text-right text-emerald-400">{interestedProducts.join(', ')}</span>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -406,9 +413,9 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                             </div>
 
                             <div className="flex justify-between items-center text-xs">
-                              <span className="text-muted-foreground">Transacción:</span>
-                              <span className="font-medium truncate max-w-[150px]" title={txn.externalTxnId}>
-                                {txn.externalTxnId}
+                              <span className="text-muted-foreground">Cód. Orden / Txn:</span>
+                              <span className="font-medium truncate max-w-[150px]" title={txn.externalOrderId || txn.externalTxnId}>
+                                {txn.externalOrderId || txn.externalTxnId}
                               </span>
                             </div>
 
@@ -417,18 +424,19 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                                 <div className="space-y-1">
                                   <Label className="text-xs text-muted-foreground">Nuevo Estado de Pasarela</Label>
                                   <Select value={txnStatus} onValueChange={setTxnStatus}>
-                                    <SelectTrigger className="h-8 text-xs bg-card">
+                                    <SelectTrigger className="h-8 text-xs bg-background/50 border-input text-white">
                                       <SelectValue placeholder="Seleccionar estado" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="APPROVED">APPROVED</SelectItem>
-                                      <SelectItem value="COMPLETED">COMPLETED</SelectItem>
-                                      <SelectItem value="PENDING">PENDING</SelectItem>
-                                      <SelectItem value="CANCELED">CANCELED</SelectItem>
-                                      <SelectItem value="REFUNDED">REFUNDED</SelectItem>
-                                      <SelectItem value="CHARGEBACK">CHARGEBACK</SelectItem>
-                                      <SelectItem value="ABANDONED_CART">ABANDONED_CART</SelectItem>
-                                      <SelectItem value="EXPIRED">EXPIRED</SelectItem>
+                                      <SelectItem value="PURCHASE_APPROVED">Aprobada</SelectItem>
+                                      <SelectItem value="PURCHASE_COMPLETE">Completa</SelectItem>
+                                      <SelectItem value="PENDING">Pendiente</SelectItem>
+                                      <SelectItem value="PURCHASE_CANCELED">Cancelada</SelectItem>
+                                      <SelectItem value="PURCHASE_REFUNDED">Reembolsada</SelectItem>
+                                      <SelectItem value="PURCHASE_PROTEST">Sol. Reembolso</SelectItem>
+                                      <SelectItem value="PURCHASE_CHARGEBACK">Chargeback</SelectItem>
+                                      <SelectItem value="PURCHASE_OUT_OF_SHOPPING_CART">Carrito Aband</SelectItem>
+                                      <SelectItem value="PURCHASE_DELAYED">Retrasada</SelectItem>
                                     </SelectContent>
                                   </Select>
                                 </div>
@@ -481,9 +489,9 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                               <>
                                 <div className="flex justify-between items-center text-xs">
                                   <span className="text-muted-foreground">Estado Pasarela:</span>
-                                  <span className={txn.status === 'APPROVED' || txn.status === 'COMPLETED' ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
-                                    {txn.status || 'N/A'}
-                                  </span>
+                                  <Badge className={`${getStatusBadgeClasses(txn.status)} font-medium`}>
+                                    {getNaturalStatusName(txn.status).toUpperCase()}
+                                  </Badge>
                                 </div>
                                 <div className="flex justify-between items-center text-xs pt-1">
                                   <span className="text-muted-foreground">Fecha:</span>

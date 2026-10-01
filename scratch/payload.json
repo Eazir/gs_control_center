@@ -1,0 +1,40 @@
+{
+  "id": "evt_p1_exitosa_01",
+  "event": "PURCHASE_APPROVED",
+  "data": {
+    "product": {
+      "id": "prod_02",
+      "name": "Producto de prueba 2"
+    },
+    "affiliates": [
+      {
+        "affiliate_code": "B100311196F",
+        "name": "Reynald 👑"
+      }
+    ],
+    "buyer": {
+      "name": "Teste Comprador",
+      "email": "testeComprador271101postman15@example.com",
+      "checkout_phone": "+99999999900"
+    },
+    "purchase": {
+      "transaction": "HP_TEST_P1_001",
+      "approved_date": "2026-09-25T14:30:00.000Z",
+      "status": "APPROVED",
+      "payment": {
+        "type": "CREDIT_CARD",
+        "installments_number": 1
+      },
+      "price": {
+        "value": 500.00,
+        "currency_code": "USD"
+      },
+      "offer": {
+        "code": "test"
+      },
+      "origin": {
+        "sck": ""
+      }
+    }
+  }
+}

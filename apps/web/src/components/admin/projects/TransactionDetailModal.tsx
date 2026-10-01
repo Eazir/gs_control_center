@@ -16,6 +16,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { LeadDetailModal, LeadData } from './LeadDetailModal';
+import { getNaturalStatusName, getStatusBadgeClasses } from '@/lib/status-utils';
 
 export interface TransactionHistoryEntry {
   id: string;
@@ -37,6 +38,7 @@ export interface TransactionData {
   createdAt: string | Date;
   paymentMethod?: string;
   productName?: string;
+  productId?: string;
   amount?: number | string;
   currency?: string;
   installments?: number;
@@ -48,18 +50,25 @@ export interface TransactionData {
   attribution?: 'COMERCIAL' | 'MARKETING';
   metadata?: unknown;
   source?: string | null;
+  pipelineStage?: string | null;
+  pipelineSubstatus?: string | null;
+  history?: TransactionHistoryEntry[];
   lead?: {
+    id?: string | null;
     name?: string | null;
     email?: string | null;
     phone?: string | null;
+    closerId?: string | null;
+    situacion?: string | null;
+    interestedProducts?: string[];
   } | null;
-  history?: TransactionHistoryEntry[];
 }
 
 export interface TransactionDetailProps {
   isOpen: boolean;
   onClose: () => void;
   transaction: TransactionData | null;
+  allTransactions?: TransactionData[];
 }
 
 /**
@@ -67,36 +76,15 @@ export interface TransactionDetailProps {
  * Muestra información del comprador (Lead), datos técnicos de la transacción (orden, ID de proveedor, SCK, offer code),
  * producto oficial del proyecto, método de pago, atribución de closer, estado y el historial de eventos (trazabilidad real).
  */
-export function TransactionDetailModal({ isOpen, onClose, transaction }: TransactionDetailProps) {
+export function TransactionDetailModal({ isOpen, onClose, transaction, allTransactions = [] }: TransactionDetailProps) {
   const [isLeadModalOpen, setIsLeadModalOpen] = React.useState(false);
 
   if (!transaction) return null;
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'PURCHASE_APPROVED':
-        return <Badge className="bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30 font-medium hover:bg-teal-500/20">COMPRA APROBADA</Badge>;
-      case 'APPROVED':
-        return <Badge className="bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30 font-medium hover:bg-teal-500/20">APROBADA</Badge>;
-      case 'COMPLETE':
-        return <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-medium hover:bg-emerald-500/20">COMPLETADA</Badge>;
-      case 'PENDING':
-      case 'WAITING_PAYMENT':
-      case 'BILLET_PRINTED':
-        return <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/30 font-medium hover:bg-amber-500/20">PENDIENTE</Badge>;
-      case 'REFUNDED':
-        return <Badge className="bg-red-500/15 text-red-500 border-red-500/30 font-medium">REEMBOLSADA</Badge>;
-      case 'CHARGEBACK':
-        return <Badge className="bg-red-500/15 text-red-500 border-red-500/30 font-medium">CHARGEBACK</Badge>;
-      case 'CANCELED':
-        return <Badge className="bg-red-500/15 text-red-500 border-red-500/30 font-medium">CANCELADA</Badge>;
-      case 'ABANDONED_CART':
-        return <Badge className="bg-orange-500/15 text-orange-400 border-orange-500/30 font-medium">CARRITO ABANDONADO</Badge>;
-      case 'EXPIRED':
-        return <Badge className="bg-gray-500/15 text-gray-400 border-gray-500/30 font-medium">EXPIRADA</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
+    const naturalName = getNaturalStatusName(status);
+    const classes = getStatusBadgeClasses(status);
+    return <Badge className={`${classes} font-medium`}>{naturalName}</Badge>;
   };
 
   const formatMoney = (amount: number, currency: string) => {
@@ -118,16 +106,19 @@ export function TransactionDetailModal({ isOpen, onClose, transaction }: Transac
 
   const formattedDate = formatDate(transaction.createdAt);
 
-  // Determinar atribución: usa el campo del backend si existe, si no infiere por closerName/closerId
-  const isComercial = transaction.attribution === 'COMERCIAL' || !!(transaction.closerName || transaction.closerId);
+  // Extraer el historial y metadata
+  const metadataRecord = (transaction.metadata as Record<string, unknown>) || {};
+  
+  // Determinar atribución: usa el campo del backend (dentro de metadata) si existe, si no infiere por closerName/closerId
+  const backendAttribution = metadataRecord.attribution as string | undefined;
+  const isComercial = backendAttribution === 'COMERCIAL' || !!(transaction.closerName || transaction.closerId);
   const attributionLabel = isComercial ? 'Atribución Comercial' : 'Atribución Marketing';
   const attributionSub = isComercial
-    ? `Venta asignada a: ${transaction.closerName || transaction.closerEmail || 'Closer asignado'}`
+    ? `Venta asignada a: ${transaction.closerName || transaction.closerEmail || (backendAttribution === 'COMERCIAL' ? 'Equipo Comercial' : 'Closer asignado')}`
     : 'Venta orgánica / sin closer asignado.';
   const saleTypeLabel = isComercial ? 'Cerrado' : 'Orgánica';
 
-  // Extraer el historial desde metadata y agrupar sub-eventos
-  const metadataRecord = (transaction.metadata as Record<string, unknown>) || {};
+  // Extraer el historial y agrupar sub-eventos
   const rawHistory = Array.isArray(metadataRecord.history) ? metadataRecord.history : [];
   
   interface HistoryEvent {
@@ -170,6 +161,34 @@ export function TransactionDetailModal({ isOpen, onClose, transaction }: Transac
       }
     }
   }
+
+  // Agrupar transacciones del lead para el LeadDetailModal
+  const leadTransactions = allTransactions.filter((t) => t.lead?.id === transaction.lead?.id && transaction.lead?.id);
+  const groupedOrdersMap = new Map<string, any[]>();
+  
+  leadTransactions.forEach((t) => {
+    const orderId = t.externalOrderId || t.externalTxnId || t.id || 'unknown';
+    if (!groupedOrdersMap.has(orderId)) {
+      groupedOrdersMap.set(orderId, []);
+    }
+    groupedOrdersMap.get(orderId)!.push({
+      id: t.id || '',
+      status: t.status,
+      externalTxnId: t.externalTxnId,
+      productName: t.productName,
+      amount: Number(t.amount) || 0,
+      createdAt: String(t.createdAt),
+      updatedAt: String(t.createdAt),
+      source: t.source,
+      sck: t.sck,
+    });
+  });
+
+  const leadHistory = Array.from(groupedOrdersMap.entries()).map(([orderId, transactions]) => ({
+    orderId,
+    transactions
+  }));
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[700px] bg-card border-border/60 max-h-[90vh] flex flex-col p-0">
@@ -413,16 +432,21 @@ export function TransactionDetailModal({ isOpen, onClose, transaction }: Transac
         isOpen={isLeadModalOpen}
         onClose={() => setIsLeadModalOpen(false)}
         lead={transaction.lead ? {
-          id: transaction.lead.email || 'unknown',
+          id: transaction.lead.id || 'unknown',
+          leadId: transaction.lead.id || 'unknown',
           fullName: transaction.lead.name || 'No provisto',
           email: transaction.lead.email || '',
           phone: transaction.lead.phone || '',
-          stageId: 'unknown',
+          stageId: transaction.pipelineStage || 'unknown',
           closerName: transaction.closerName || 'Sin asignar',
+          closerId: transaction.closerId || 'unassigned',
+          situacion: transaction.lead.situacion || 'none',
+          interestedProducts: transaction.lead.interestedProducts || [],
           productName: transaction.productName || 'N/A',
           estimatedValue: Number(transaction.amount) || 0,
-          source: 'N/A',
+          source: transaction.source || 'N/A',
           createdAt: String(transaction.createdAt),
+          history: leadHistory,
         } : null}
         stageName=""
       />

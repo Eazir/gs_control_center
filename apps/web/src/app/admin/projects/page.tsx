@@ -1281,7 +1281,7 @@ export default function AdminProjectsPage() {
                           <TableHead className="text-[11px] text-muted-foreground font-bold">Cód. Oferta</TableHead>
                           <TableHead className="text-[11px] text-muted-foreground font-bold text-right">Precio</TableHead>
                           <TableHead className="text-[11px] text-muted-foreground font-bold text-center">Cuotas</TableHead>
-                          <TableHead className="text-[11px] text-muted-foreground font-bold text-center">Propietario / Label</TableHead>
+                          <TableHead className="text-[11px] text-muted-foreground font-bold text-center">Label Externo</TableHead>
                           <TableHead className="text-[11px] text-muted-foreground font-bold text-center">Estado</TableHead>
                           <TableHead className="text-[11px] text-muted-foreground font-bold text-right">Acción</TableHead>
                         </TableRow>
@@ -1311,12 +1311,7 @@ export default function AdminProjectsPage() {
                               {prod.installments || 1}
                             </TableCell>
                             <TableCell className="text-[10px] text-center py-2 text-muted-foreground">
-                              {prod.ownerCloserId ? (
-                                <span className="flex items-center justify-center gap-1">
-                                  <UserCheck size={10} className="text-blue-400" />
-                                  {teamMembers.find((m) => m.userId === prod.ownerCloserId)?.userName || `Closer (${prod.ownerCloserId.substring(0,4)})`}
-                                </span>
-                              ) : prod.externalLabel ? (
+                              {prod.externalLabel ? (
                                 <span className="flex items-center justify-center gap-1">
                                   <Tag size={10} className="text-purple-400" />
                                   {prod.externalLabel}
@@ -1443,22 +1438,6 @@ export default function AdminProjectsPage() {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground font-medium">Closer Propietario (Opcional)</Label>
-                      <Select value={newProdOwnerCloserId || 'none'} onValueChange={(val) => setNewProdOwnerCloserId(val === 'none' ? '' : val)}>
-                        <SelectTrigger className="bg-[#0E1118] border-border text-xs h-8">
-                          <SelectValue placeholder="-- Sin asignar --" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">-- Sin asignar --</SelectItem>
-                          {activeTeamClosers.map((m) => (
-                            <SelectItem key={m.userId} value={m.userId}>
-                              {m.userName || m.userId}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
                     <div className="space-y-1">
                       <Label className="text-[11px] text-muted-foreground font-medium">Marketing</Label>
                       <div className="flex items-center h-8 space-x-2 bg-[#0E1118] px-3 rounded-md border border-border">

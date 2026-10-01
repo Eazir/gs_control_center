@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { SaleListItem, ProductItem } from '@gs/contracts';
 import { Badge } from '@/components/ui/badge';
+import { getNaturalStatusName, getStatusBadgeClasses } from '@/lib/status-utils';
 import { TransactionDetailModal } from './TransactionDetailModal';
 
 export interface SalesViewMember {
@@ -162,9 +163,6 @@ export function SalesView({
         price: p.price,
         currency: p.currency || projectCurrency,
       };
-      if (p.ownerCloserId) {
-        item.ownerCloserId = p.ownerCloserId;
-      }
       list.push(item);
     }
 
@@ -182,9 +180,6 @@ export function SalesView({
         price: typeof l.estimatedValue === 'number' ? l.estimatedValue : 997,
         currency: projectCurrency,
       };
-      if (l.closerId) {
-        item.ownerCloserId = l.closerId;
-      }
       list.push(item);
     }
 
@@ -345,9 +340,6 @@ export function SalesView({
       initialProductId = firstProd.id.startsWith('lead-') || firstProd.id.startsWith('std-') ? '' : firstProd.id;
       initialAmount = String(firstProd.price);
       initialCurrency = firstProd.currency || projectCurrency;
-      if (firstProd.ownerCloserId && initialCloserId === 'none') {
-        initialCloserId = firstProd.ownerCloserId;
-      }
     } else {
       setSelectedProductId('');
     }
@@ -408,11 +400,7 @@ export function SalesView({
         productId: product.id.startsWith('lead-') || product.id.startsWith('std-') ? '' : product.id,
         amount: String(product.price),
         currency: product.currency || projectCurrency,
-        closerId: product.ownerCloserId || prev.closerId,
       }));
-      if (product.ownerCloserId && selectedCloserId === 'none') {
-        setSelectedCloserId(product.ownerCloserId);
-      }
     }
   };
 
@@ -509,7 +497,7 @@ export function SalesView({
   // Filtrado de ventas
   const filteredSales = sales.filter((s) => {
     // En la vista de Ventas principales, solo mostramos las ventas efectivas
-    const isSuccessStatus = ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'COMPLETED', 'PENDING'].includes(s.status);
+    const isSuccessStatus = ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'COMPLETED', 'PURCHASE_COMPLETE', 'PENDING'].includes(s.status);
     if (!isSuccessStatus) return false;
 
     const q = searchTerm.toLowerCase();
@@ -682,31 +670,9 @@ export function SalesView({
                       }).format(sale.amount)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {sale.status === 'PURCHASE_APPROVED' ? (
-                        <Badge className="bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30 font-medium">
-                          COMPRA APROBADA
-                        </Badge>
-                      ) : sale.status === 'APPROVED' ? (
-                        <Badge className="bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/30 font-medium">
-                          APROBADA
-                        </Badge>
-                      ) : sale.status === 'COMPLETE' ? (
-                        <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-medium">
-                          COMPLETADA
-                        </Badge>
-                      ) : sale.status === 'REFUNDED' ? (
-                        <Badge className="bg-destructive/15 text-destructive border-destructive/30 font-medium">
-                          REEMBOLSO
-                        </Badge>
-                      ) : sale.status === 'PENDING' ? (
-                        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/30 font-medium">
-                          PENDIENTE
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="font-medium">
-                          {sale.status}
-                        </Badge>
-                      )}
+                      <Badge className={`${getStatusBadgeClasses(sale.status)} font-medium`}>
+                        {getNaturalStatusName(sale.status).toUpperCase()}
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 ))
@@ -965,7 +931,7 @@ export function SalesView({
                   onValueChange={(v) =>
                     setManualForm({
                       ...manualForm,
-                      status: v as 'APPROVED' | 'PENDING' | 'REFUNDED' | 'CANCELED',
+                      status: v as any,
                     })
                   }
                 >
@@ -973,10 +939,12 @@ export function SalesView({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border">
-                    <SelectItem value="APPROVED">Aprobada</SelectItem>
+                    <SelectItem value="PURCHASE_APPROVED">Aprobada</SelectItem>
+                    <SelectItem value="PURCHASE_COMPLETE">Completa</SelectItem>
                     <SelectItem value="PENDING">Pendiente</SelectItem>
-                    <SelectItem value="REFUNDED">Reembolsada</SelectItem>
-                    <SelectItem value="CANCELED">Cancelada</SelectItem>
+                    <SelectItem value="PURCHASE_REFUNDED">Reembolsada</SelectItem>
+                    <SelectItem value="PURCHASE_PROTEST">Sol. Reembolso</SelectItem>
+                    <SelectItem value="PURCHASE_CANCELED">Cancelada</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1058,6 +1026,7 @@ export function SalesView({
         isOpen={!!selectedTxn}
         onClose={() => setSelectedTxn(null)}
         transaction={selectedTxn}
+        allTransactions={sales as any}
       />
     </div>
   );

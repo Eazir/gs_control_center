@@ -330,7 +330,7 @@ model Sale {
 model LeadInterestedProduct {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   leadId    String   @map("lead_id") @db.Uuid
-  productId String   @map("product_id") @db.Uuid
+  productId String   @map("product_id")
   note      String?  
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 

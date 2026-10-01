@@ -41,7 +41,7 @@ export const ManualSaleSchema = z.object({
   closerId: z.string().optional(),
   amount: z.number().min(0, 'El monto debe ser positivo'),
   currency: z.string().default('USD'),
-  status: z.enum(['APPROVED', 'REFUNDED', 'CANCELED', 'PENDING']).default('APPROVED'),
+  status: z.string().default('PURCHASE_APPROVED'),
   date: z.string().datetime().optional()
 });
 
@@ -125,8 +125,11 @@ export interface SaleListItem {
 export const UpdateLeadSchema = z.object({
   name: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),
-  email: z.string().email().optional(),
-  situacion: LeadSituacionEnum.nullable().optional(),
+  email: z.string().email().or(z.literal('')).nullable().optional(),
+  situacion: z.preprocess(
+    (val) => typeof val === 'string' ? val.toUpperCase().replace(/\s+/g, '_') : val,
+    LeadSituacionEnum.nullable().optional()
+  ),
   closerId: z.string().uuid().nullable().optional(),
   productOfInterest: z.string().nullable().optional(),
 });
