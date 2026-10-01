@@ -1328,30 +1328,46 @@ export class SalesService implements OnModuleInit {
   }
 
   async importSaleCsv(projectId: string, dto: CsvSaleImportDto, requestedBy: string) {
-    return withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
-      // 1. Validar unicidad por ID de transacción
-      const existingSale = await tx.sale.findFirst({
-        where: { projectId, externalTxnId: dto.externalTxnId }
-      });
-      if (existingSale) throw new Error(`La transacción ${dto.externalTxnId} ya existe.`);
-
-      // ── Resolución de closerId ──────────────────────────────────
-      let closerId: string | null = null;
-      if (dto.sck) {
-        try {
-          const closerUser = await tx.projectUser.findFirst({
-            where: { projectId, sckCodes: { has: dto.sck.trim() } },
-          });
-          if (closerUser) closerId = closerUser.userId;
-        } catch {
-          // Ignorar si el SCK no resuelve
-        }
+    // ── Resolución de closerId (fuera de la transacción para evitar abortos) ──
+    let closerId: string | null = null;
+    if (dto.sck) {
+      try {
+        const closerUser = await this.prisma.projectUser.findFirst({
+          where: { projectId, sckCodes: { has: dto.sck.trim() } },
+        });
+        if (closerUser) closerId = closerUser.userId;
+      } catch {
+        // Ignorar si falla la búsqueda por SCK (ej. formato inválido)
       }
+    }
 
-      // 2. Determinar etapa en pipeline para esta transacción
-      const situacion = this.determineSituacion(dto.status);
-      const pipelineStage = this.determineStage(dto.status, situacion, !!closerId);
+    // 2. Determinar etapa en pipeline para esta transacción
+    const situacion = this.determineSituacion(dto.status);
+    const pipelineStage = this.determineStage(dto.status, situacion, !!closerId);
 
+    // 3. Determinar Producto por offerCode (fuera de la transacción para evitar abortos)
+    let finalProductName = dto.productName || 'Importado CSV';
+    let finalAmount = dto.amount ?? 0;
+    let finalCurrency = dto.currency ?? 'USD';
+    let finalInstallments = dto.installments ?? 1;
+
+    if (dto.offerCode) {
+      try {
+        const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { products: true } });
+        const products = (project?.products as Array<{ id: string; name: string; price: number; offerCode?: string | null; currency?: string; installments?: number }>) || [];
+        const matchedProd = products.find(p => p.offerCode === dto.offerCode);
+        if (matchedProd) {
+          if (!dto.productName) finalProductName = matchedProd.name;
+          if (dto.amount === 0 || dto.amount === undefined) finalAmount = matchedProd.price;
+          if (!dto.currency || dto.currency === 'USD') finalCurrency = matchedProd.currency || 'USD';
+          if (dto.installments === 1 || dto.installments === undefined) finalInstallments = matchedProd.installments || 1;
+        }
+      } catch {
+        // Ignorar y usar fallbacks
+      }
+    }
+
+    return withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
       // 3. Crear o actualizar Lead comprador (Priorizar Teléfono)
       let lead = null;
       if (dto.leadPhone) {
@@ -1367,10 +1383,13 @@ export class SalesService implements OnModuleInit {
         });
       }
 
-      // Si el lead ya tiene transacciones (y esta importación es una transacción NUEVA),
-      // creamos un nuevo lead para cumplir la regla 1 Lead x Transacción
+      let matchingSale = null;
       if (lead && lead.sales.length > 0) {
-        lead = null;
+        matchingSale = lead.sales.find(s => s.externalTxnId === dto.externalTxnId);
+        if (!matchingSale) {
+          // Si tiene ventas pero NINGUNA es esta transacción, creamos un lead nuevo (1 lead x transaccion distinta)
+          lead = null;
+        }
       }
 
       if (lead) {
@@ -1378,8 +1397,7 @@ export class SalesService implements OnModuleInit {
         if (!lead.name && dto.leadName) updateData.name = dto.leadName;
         if (!lead.email && dto.leadEmail) updateData.email = dto.leadEmail;
         if (!lead.phone && dto.leadPhone) updateData.phone = dto.leadPhone;
-        // Solo actualizar el pipeline stage del lead si la nueva transacción
-        // representa un avance o cambio relevante (por simplicidad, lo sobreescribimos)
+        // Solo actualizar el pipeline stage del lead si la nueva transacción es un avance
         updateData.pipelineStage = pipelineStage;
         if (situacion) updateData.situacion = situacion;
         if (closerId && !lead.closerId) updateData.closerId = closerId;
@@ -1400,36 +1418,61 @@ export class SalesService implements OnModuleInit {
         });
       }
 
-      // 4. Crear Venta
+
+
+      // 5. Crear o Actualizar Venta
       const parsedDate = dto.date ? new Date(dto.date) : new Date();
       const saleDate = isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
       const orderId = dto.externalOrderId || dto.externalTxnId;
 
-      const sale = await tx.sale.create({
-        data: {
-          projectId,
-          leadId: lead.id,
-          source: 'CSV_IMPORT',
-          externalOrderId: orderId, 
-          externalTxnId: dto.externalTxnId,
-          productName: dto.productName || 'Importado CSV',
-          status: dto.status,
-          amount: dto.amount ?? 0,
-          currency: dto.currency ?? 'USD',
-          createdAt: saleDate,
-          closerId: closerId ?? null,
-          offerCode: dto.offerCode ?? null,
-          sck: dto.sck ?? null,
-          paymentMethod: dto.paymentMethod ?? null,
-          installments: dto.installments,
-          pipelineStage,
-          metadata: { 
-            history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: saleDate })],
-            isFirstInstallment: dto.isFirstInstallment
+      if (matchingSale) {
+        // Actualizar transacción existente
+        const updatedHistory = ((matchingSale.metadata as Record<string, unknown>)?.history as Prisma.InputJsonObject[]) || [];
+        updatedHistory.push(this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: saleDate }) as Prisma.InputJsonObject);
+        
+        const sale = await tx.sale.update({
+          where: { id: matchingSale.id },
+          data: {
+            status: dto.status,
+            amount: dto.amount && dto.amount > 0 ? dto.amount : matchingSale.amount,
+            productName: finalProductName,
+            closerId: closerId ?? matchingSale.closerId,
+            pipelineStage,
+            metadata: {
+              ...((matchingSale.metadata as object) || {}),
+              history: updatedHistory
+            }
           }
-        }
-      });
-      return sale;
+        });
+        return sale;
+      } else {
+        // Crear nueva transacción
+        const sale = await tx.sale.create({
+          data: {
+            projectId,
+            leadId: lead.id,
+            source: 'CSV_IMPORT',
+            externalOrderId: orderId, 
+            externalTxnId: dto.externalTxnId,
+            productName: finalProductName,
+            status: dto.status,
+            amount: finalAmount,
+            currency: finalCurrency,
+            createdAt: saleDate,
+            closerId: closerId ?? null,
+            offerCode: dto.offerCode ?? null,
+            sck: dto.sck ?? null,
+            paymentMethod: dto.paymentMethod ?? null,
+            installments: finalInstallments,
+            pipelineStage,
+            metadata: { 
+              history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: saleDate })],
+              isFirstInstallment: dto.isFirstInstallment
+            }
+          }
+        });
+        return sale;
+      }
     });
   }
 }

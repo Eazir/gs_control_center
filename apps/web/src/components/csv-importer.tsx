@@ -24,20 +24,15 @@ const LEADS_FIELDS = [
 ];
 
 const SALES_FIELDS = [
-  { key: 'externalTxnId', label: 'Código de Transacción (Requerido)', required: true },
-  { key: 'status', label: 'Estado de transacción (Requerido)', required: true },
-  { key: 'externalOrderId', label: 'Código de Orden (Agrupa transacciones)', required: false },
-  { key: 'productName', label: 'Nombre del Producto', required: false },
-  { key: 'amount', label: 'Monto', required: false },
-  { key: 'currency', label: 'Moneda (USD, COP...)', required: false },
-  { key: 'date', label: 'Fecha (YYYY-MM-DD o ISO)', required: false },
-  { key: 'leadName', label: 'Nombres del Comprador', required: false },
-  { key: 'leadEmail', label: 'Correo del Comprador', required: false },
-  { key: 'leadPhone', label: 'Teléfono del Comprador', required: false },
-  { key: 'offerCode', label: 'Código de Oferta', required: false },
-  { key: 'sck', label: 'Código SCK (Closer)', required: false },
-  { key: 'paymentMethod', label: 'Tipo de pago', required: false },
-  { key: 'installments', label: 'Cuotas', required: false },
+  { key: 'externalTxnId', label: 'Código de Transacción (el HP) (Requerido)', required: true },
+  { key: 'offerCode', label: 'Código de Oferta (Requerido)', required: true },
+  { key: 'sck', label: 'Código SCK (Requerido)', required: true },
+  { key: 'affiliateName', label: 'Afiliado (nombre no código) (Requerido)', required: true },
+  { key: 'status', label: 'Estado de la transacción (Requerido)', required: true },
+  { key: 'date', label: 'Fecha de transacción (Requerido)', required: true },
+  { key: 'leadName', label: 'Nombre del lead (Requerido)', required: true },
+  { key: 'leadEmail', label: 'Email del lead (Requerido)', required: true },
+  { key: 'leadPhone', label: 'Teléfono del lead (Requerido)', required: true },
 ];
 
 interface ImportProgress {

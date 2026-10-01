@@ -70,13 +70,14 @@ export const CsvLeadImportSchema = z.object({
 export type CsvLeadImportDto = z.infer<typeof CsvLeadImportSchema>;
 
 export const CsvSaleImportSchema = z.object({
-  date: z.string().optional(),
-  leadName: z.string().optional(),
-  leadEmail: z.string().email('Email inválido para importación').optional().nullable(),
-  leadPhone: z.string().optional(),
-  offerCode: z.string().optional(),
+  date: z.string().min(1, 'La fecha es requerida'),
+  leadName: z.string().min(1, 'El nombre es requerido'),
+  leadEmail: z.string().email('Email inválido para importación'),
+  leadPhone: z.string().min(1, 'El teléfono es requerido'),
+  offerCode: z.string().min(1, 'El código de oferta es requerido'),
   status: z.string().min(1, 'El estado de la transacción es requerido'),
-  sck: z.string().optional().nullable(),
+  sck: z.string().min(1, 'El SCK es requerido'),
+  affiliateName: z.string().min(1, 'El nombre del afiliado es requerido'),
   paymentMethod: z.string().optional(),
   installments: z.coerce.number().default(1),
   isFirstInstallment: z.boolean().default(true),
