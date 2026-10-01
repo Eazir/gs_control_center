@@ -1763,14 +1763,7 @@ export default function ProjectDetailsPage() {
                               draggable
                               onDragStart={(e) => handleDragStart(e, lead.id)}
                               onClick={() => {
-                                if (lead.latestTransaction) {
-                                  setSelectedTransaction({
-                                    ...lead.latestTransaction,
-                                    closerName: lead.closerName
-                                  });
-                                } else {
-                                  setSelectedLead(lead as LeadData);
-                                }
+                                setSelectedLead(lead as unknown as LeadData);
                               }}
                               className="p-3.5 rounded-xl border border-border/70 bg-card/40 hover:border-primary/50 hover:bg-card transition-all space-y-3 shadow-sm cursor-grab active:cursor-grabbing group relative"
                             >
