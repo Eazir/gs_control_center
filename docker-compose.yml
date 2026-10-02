@@ -116,7 +116,7 @@ services:
   #   docker compose run --rm migrate
   migrate:
     <<: *app-base
-    command: ["npx", "prisma", "migrate", "deploy"]
+    command: ["npx", "--yes", "prisma@6.4.1", "migrate", "deploy"]
     restart: "no"
     profiles: [tools]
     healthcheck: { disable: true }
