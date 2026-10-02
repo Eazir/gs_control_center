@@ -223,7 +223,7 @@ export default function LoginPage() {
 
                   <div className="text-center pt-2">
                     <Link
-                      href="/recuperar"
+                      href="/forgot-password"
                       className="text-xs text-muted-foreground hover:text-primary transition-colors"
                     >
                       ¿Olvidaste tu contraseña?

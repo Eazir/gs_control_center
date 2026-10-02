@@ -31,6 +31,10 @@ import {
   JwtPayload,
   UserStatus,
   UserRole,
+  ForgotPasswordDto,
+  ForgotPasswordInputSchema,
+  ResetPasswordDto,
+  ResetPasswordInputSchema,
 } from '@gs/contracts';
 import { LoginUseCase } from '../application/use-cases/login.use-case';
 import { RefreshTokenUseCase } from '../application/use-cases/refresh-token.use-case';
@@ -45,6 +49,8 @@ import { ListInvitationsUseCase } from '../application/use-cases/list-invitation
 import { DeleteInvitationUseCase } from '../application/use-cases/delete-invitation.use-case';
 import { ResendInvitationUseCase } from '../application/use-cases/resend-invitation.use-case';
 import { ListActiveClosersUseCase } from '../application/use-cases/list-active-closers.use-case';
+import { ForgotPasswordUseCase } from '../application/use-cases/forgot-password.use-case';
+import { ResetPasswordUseCase } from '../application/use-cases/reset-password.use-case';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { ZodValidationPipe } from './dto/login.dto';
@@ -86,6 +92,10 @@ export class AuthController {
     private readonly resendInvitationUseCase: ResendInvitationUseCase,
     @Inject(ListActiveClosersUseCase)
     private readonly listActiveClosersUseCase: ListActiveClosersUseCase,
+    @Inject(ForgotPasswordUseCase)
+    private readonly forgotPasswordUseCase: ForgotPasswordUseCase,
+    @Inject(ResetPasswordUseCase)
+    private readonly resetPasswordUseCase: ResetPasswordUseCase,
   ) {}
 
   @Post('login')
@@ -126,6 +136,25 @@ export class AuthController {
   }
 
 
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(
+    @Body(new ZodValidationPipe(ForgotPasswordInputSchema)) body: ForgotPasswordDto
+  ): Promise<{ message: string }> {
+    await this.forgotPasswordUseCase.execute(body);
+    // Siempre respondemos OK sin revelar si el correo existe o no
+    return { message: 'Si el correo está registrado, recibirás un enlace de recuperación.' };
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(
+    @Body(new ZodValidationPipe(ResetPasswordInputSchema)) body: ResetPasswordDto
+  ): Promise<{ message: string }> {
+    await this.resetPasswordUseCase.execute(body);
+    return { message: 'Contraseña actualizada con éxito.' };
+  }
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)

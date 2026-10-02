@@ -20,9 +20,13 @@ import { ListInvitationsUseCase } from './application/use-cases/list-invitations
 import { DeleteInvitationUseCase } from './application/use-cases/delete-invitation.use-case';
 import { ResendInvitationUseCase } from './application/use-cases/resend-invitation.use-case';
 import { ListActiveClosersUseCase } from './application/use-cases/list-active-closers.use-case';
+import { ForgotPasswordUseCase } from './application/use-cases/forgot-password.use-case';
+import { ResetPasswordUseCase } from './application/use-cases/reset-password.use-case';
 import { AuthPublicService } from './application/services/auth-public.service';
+import { CommunicationsModule } from '../communications';
 
 @Module({
+  imports: [CommunicationsModule],
   controllers: [AuthController],
   providers: [
     // Puertos / Repositorios
@@ -52,6 +56,8 @@ import { AuthPublicService } from './application/services/auth-public.service';
     DeleteInvitationUseCase,
     ResendInvitationUseCase,
     ListActiveClosersUseCase,
+    ForgotPasswordUseCase,
+    ResetPasswordUseCase,
     // Guards
     JwtAuthGuard,
     // Servicio Público para otros módulos

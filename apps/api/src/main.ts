@@ -5,10 +5,9 @@ import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 
-// Cargar variables de entorno (.env de la raíz y local)
-dotenv.config();
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Cargar variables de entorno usando el CWD para que no dependa de si estamos en dist o src
+dotenv.config({ path: path.resolve(process.cwd(), '../../.env') }); // Raíz del monorepo
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });       // Local del API
 
 async function bootstrap() {
   const args = process.argv.slice(2);

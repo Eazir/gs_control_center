@@ -11,6 +11,7 @@ import {
   INVITATION_REPOSITORY_TOKEN,
 } from '../../domain/ports/invitation-repository.port';
 import { TokenService } from '../../../../core/security';
+import { CommunicationsService } from '../../../communications';
 import crypto from 'node:crypto';
 
 export interface ResendInvitationOutput {
@@ -27,7 +28,9 @@ export class ResendInvitationUseCase {
     @Inject(INVITATION_REPOSITORY_TOKEN)
     private readonly invitationRepository: IInvitationRepository,
     @Inject(TokenService)
-    private readonly tokenService: TokenService
+    private readonly tokenService: TokenService,
+    @Inject(CommunicationsService)
+    private readonly communicationsService: CommunicationsService
   ) {}
 
   async execute(
@@ -61,6 +64,16 @@ export class ResendInvitationUseCase {
       tokenHash,
       expiresAt
     );
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const inviteLink = `${frontendUrl}/accept-invite?email=${encodeURIComponent(updated.email)}&token=${plainToken}`;
+
+    await this.communicationsService.enqueueEmail({
+      to: updated.email,
+      subject: 'Recordatorio: Invitación a GrowthShell',
+      template: 'USER_INVITATION',
+      payload: { link: inviteLink, name: 'Usuario' } // name could be passed or omitted if not known
+    });
 
     return {
       invitationId: updated.id,

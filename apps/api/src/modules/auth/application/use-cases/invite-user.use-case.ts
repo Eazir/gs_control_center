@@ -9,6 +9,7 @@ import {
   INVITATION_REPOSITORY_TOKEN,
 } from '../../domain/ports/invitation-repository.port';
 import { TokenService, PasswordService } from '../../../../core/security';
+import { CommunicationsService } from '../../../communications';
 
 import { UserAlreadyExistsError } from '../../domain/errors/auth.errors';
 import crypto from 'node:crypto';
@@ -37,7 +38,9 @@ export class InviteUserUseCase {
     @Inject(TokenService)
     private readonly tokenService: TokenService,
     @Inject(PasswordService)
-    private readonly passwordService: PasswordService
+    private readonly passwordService: PasswordService,
+    @Inject(CommunicationsService)
+    private readonly communicationsService: CommunicationsService
   ) {}
 
   async execute(input: InviteUserUseCaseInput): Promise<InviteUserUseCaseOutput> {
@@ -70,6 +73,16 @@ export class InviteUserUseCase {
       role: input.role,
       status: 'INVITED',
       createdBy: input.invitedById,
+    });
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const inviteLink = `${frontendUrl}/accept-invite?email=${encodeURIComponent(input.email)}&token=${plainToken}`;
+
+    await this.communicationsService.enqueueEmail({
+      to: input.email,
+      subject: 'Invitación a GrowthShell',
+      template: 'USER_INVITATION',
+      payload: { link: inviteLink, name: input.fullName }
     });
 
     return {

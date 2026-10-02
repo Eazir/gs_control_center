@@ -9,6 +9,7 @@ import { SalesModule } from './modules/sales';
 import { IntegrationsModule } from './modules/integrations';
 import { SuperAdminModule } from './modules/super-admin';
 import { KpiModule } from './modules/kpi/kpi.module';
+import { CommunicationsModule } from './modules/communications';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { KpiModule } from './modules/kpi/kpi.module';
     IntegrationsModule,
     SuperAdminModule,
     KpiModule,
+    CommunicationsModule,
   ],
 })
 export class AppModule {}
