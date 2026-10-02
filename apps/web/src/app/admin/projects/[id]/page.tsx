@@ -3690,33 +3690,35 @@ export default function ProjectDetailsPage() {
             </DialogHeader>
 
             <div className="space-y-4 py-2">
-              {/* Box de Modo Desarrollo / Túnel */}
-              <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-primary flex items-center gap-1.5">
-                    <Radio size={13} className="text-primary animate-pulse" />
-                    Túnel de Desarrollo (Sin Dominio Propio)
-                  </span>
-                  <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-mono">
-                    Localhost :3001
-                  </span>
+              {/* Box de Modo Desarrollo / Túnel (Solo en local) */}
+              {process.env.NODE_ENV !== 'production' && (
+                <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-primary flex items-center gap-1.5">
+                      <Radio size={13} className="text-primary animate-pulse" />
+                      Túnel de Desarrollo (Sin Dominio Propio)
+                    </span>
+                    <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-mono">
+                      Localhost :3001
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Hotmart está en la nube y requiere una <strong>URL pública con HTTPS</strong>. En tu terminal ejecuta:{' '}
+                    <code className="text-foreground bg-black/60 px-1 py-0.5 rounded font-mono">npx localtunnel --port 3001</code> o{' '}
+                    <code className="text-foreground bg-black/60 px-1 py-0.5 rounded font-mono">ngrok http 3001</code>.
+                  </p>
+                  <div className="space-y-1 pt-1">
+                    <Label className="text-[10px] text-muted-foreground font-medium">URL base de tu túnel HTTPS:</Label>
+                    <Input
+                      placeholder="Ej. https://mi-tunel.loca.lt o https://xxxx.ngrok-free.app"
+                      value={tunnelUrl}
+                      onChange={(e) => setTunnelUrl(e.target.value)}
+                      onFocus={(e) => e.target.select()}
+                      className="h-8 text-xs font-mono bg-black/50 border-border"
+                    />
+                  </div>
                 </div>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  Hotmart está en la nube y requiere una <strong>URL pública con HTTPS</strong>. En tu terminal ejecuta:{' '}
-                  <code className="text-foreground bg-black/60 px-1 py-0.5 rounded font-mono">npx localtunnel --port 3001</code> o{' '}
-                  <code className="text-foreground bg-black/60 px-1 py-0.5 rounded font-mono">ngrok http 3001</code>.
-                </p>
-                <div className="space-y-1 pt-1">
-                  <Label className="text-[10px] text-muted-foreground font-medium">URL base de tu túnel HTTPS:</Label>
-                  <Input
-                    placeholder="Ej. https://mi-tunel.loca.lt o https://xxxx.ngrok-free.app"
-                    value={tunnelUrl}
-                    onChange={(e) => setTunnelUrl(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                    className="h-8 text-xs font-mono bg-black/50 border-border"
-                  />
-                </div>
-              </div>
+              )}
 
               {/* URL que se pega en Hotmart */}
               <div className="space-y-2">
@@ -3727,7 +3729,11 @@ export default function ProjectDetailsPage() {
                 <div className="flex gap-2">
                   <Input
                     readOnly
-                    value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com')}/integrations/hotmart/webhook/${projectId}`}
+                    value={
+                      process.env.NODE_ENV === 'production'
+                        ? `https://hooks.growth-sell.xyz/integrations/hotmart/webhook/${projectId}`
+                        : `${(tunnelUrl.trim().replace(/\/$/, '') || 'https://hooks.growth-sell.xyz')}/integrations/hotmart/webhook/${projectId}`
+                    }
                     className="h-9 text-xs font-mono bg-black/50 border-border text-foreground font-semibold select-all"
                   />
                   <Button
