@@ -69,6 +69,12 @@ export interface TransactionDetailProps {
   onClose: () => void;
   transaction: TransactionData | null;
   allTransactions?: TransactionData[];
+  projectId?: string;
+  activeClosers?: { id: string; name: string }[];
+  pipelineStages?: { id: string; name: string }[];
+  products?: { id: string; name: string; price: number; currency: string }[];
+  isCloser?: boolean;
+  onSaveLead?: () => void;
 }
 
 /**
@@ -76,7 +82,18 @@ export interface TransactionDetailProps {
  * Muestra información del comprador (Lead), datos técnicos de la transacción (orden, ID de proveedor, SCK, offer code),
  * producto oficial del proyecto, método de pago, atribución de closer, estado y el historial de eventos (trazabilidad real).
  */
-export function TransactionDetailModal({ isOpen, onClose, transaction, allTransactions = [] }: TransactionDetailProps) {
+export function TransactionDetailModal({ 
+  isOpen, 
+  onClose, 
+  transaction, 
+  allTransactions = [],
+  projectId,
+  activeClosers = [],
+  pipelineStages = [],
+  products = [],
+  isCloser = false,
+  onSaveLead
+}: TransactionDetailProps) {
   const [isLeadModalOpen, setIsLeadModalOpen] = React.useState(false);
 
   if (!transaction) return null;
@@ -448,7 +465,17 @@ export function TransactionDetailModal({ isOpen, onClose, transaction, allTransa
           createdAt: String(transaction.createdAt),
           history: leadHistory,
         } : null}
-        stageName=""
+        stageName={transaction.pipelineStage || 'Sin contactar'}
+        projectId={projectId || ''}
+        activeClosers={activeClosers}
+        pipelineStages={pipelineStages}
+        products={products as any}
+        allTransactions={allTransactions}
+        isCloser={isCloser}
+        onSave={() => {
+          setIsLeadModalOpen(false);
+          if (onSaveLead) onSaveLead();
+        }}
       />
     </Dialog>
   );

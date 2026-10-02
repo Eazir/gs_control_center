@@ -13,7 +13,9 @@ export function getNaturalStatusName(status: string | null | undefined): string 
       return 'Completa';
     case 'PURCHASE_BILLET_PRINTED':
     case 'BILLET_PRINTED':
-      return 'Esperando pago';
+    case 'PENDING':
+    case 'A LA ESPERA DE PAGO':
+      return 'Por pagar';
     case 'PURCHASE_APPROVED':
     case 'APPROVED':
       return 'Aprobada';
@@ -34,8 +36,6 @@ export function getNaturalStatusName(status: string | null | undefined): string 
     case 'ABANDONED_CART':
     case 'SHOPPING_CART':
       return 'Carrito Aband';
-    case 'PENDING':
-      return 'Pendiente';
     default:
       return status;
   }

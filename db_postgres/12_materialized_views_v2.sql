@@ -20,10 +20,10 @@ SELECT
     COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND closer_id IS NOT NULL) AS comercial_ventas,
     SUM(amount) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND closer_id IS NOT NULL) AS comercial_facturacion,
 
-    COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND UPPER(COALESCE(external_txn_id, '')) LIKE 'HP%') AS hotmart_ventas,
-    SUM(amount) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND UPPER(COALESCE(external_txn_id, '')) LIKE 'HP%') AS hotmart_facturacion,
-    COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND UPPER(COALESCE(external_txn_id, '')) NOT LIKE 'HP%') AS externas_ventas,
-    SUM(amount) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND UPPER(COALESCE(external_txn_id, '')) NOT LIKE 'HP%') AS externas_facturacion,
+    COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND (UPPER(COALESCE(external_txn_id, '')) LIKE 'HP%' OR UPPER(COALESCE(external_order_id, '')) LIKE 'HP%')) AS hotmart_ventas,
+    SUM(amount) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND (UPPER(COALESCE(external_txn_id, '')) LIKE 'HP%' OR UPPER(COALESCE(external_order_id, '')) LIKE 'HP%')) AS hotmart_facturacion,
+    COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND UPPER(COALESCE(external_txn_id, '')) NOT LIKE 'HP%' AND UPPER(COALESCE(external_order_id, '')) NOT LIKE 'HP%') AS externas_ventas,
+    SUM(amount) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND UPPER(COALESCE(external_txn_id, '')) NOT LIKE 'HP%' AND UPPER(COALESCE(external_order_id, '')) NOT LIKE 'HP%') AS externas_facturacion,
 
     SUM(commission_amount) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo')) AS sum_commission
 FROM sales.sales

@@ -49,9 +49,10 @@ export interface LeadDetailProps {
   products?: { id: string; name: string; ownerCloserId?: string | null | undefined }[];
   allTransactions?: any[]; // Historial completo para agrupar
   onSave?: () => void;
+  isCloser?: boolean;
 }
 
-export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, activeClosers, pipelineStages, products, allTransactions = [], onSave }: LeadDetailProps) {
+export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, activeClosers, pipelineStages, products, allTransactions = [], onSave, isCloser = false }: LeadDetailProps) {
   const [isEditingContact, setIsEditingContact] = useState(false);
   const [editingTxnId, setEditingTxnId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -76,7 +77,15 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
       setEmail(lead.email || '');
       setPhone(lead.phone || '');
       setCloserId(lead.closerId || 'unassigned');
-      setProductOfInterest('none');
+      
+      let initialProduct = 'none';
+      if (lead.interestedProducts && lead.interestedProducts.length > 0) {
+        const prodName = lead.interestedProducts[0];
+        const matched = products?.find(p => p.name === prodName || p.id === prodName);
+        if (matched) initialProduct = matched.id;
+      }
+      setProductOfInterest(initialProduct);
+
       setSituacion(lead.situacion || 'none');
       setStageId(lead.stageId || '');
       
@@ -258,14 +267,14 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                         <SelectContent>
                           <SelectItem value="none">Ninguno</SelectItem>
                           {availableProducts.map(p => (
-                            <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                   )}
 
-                  {activeClosers && (
+                  {activeClosers && !isCloser && (
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground">Closer Asignado</Label>
                       <Select value={closerId || 'unassigned'} onValueChange={setCloserId}>
@@ -444,7 +453,7 @@ export function LeadDetailModal({ isOpen, onClose, lead, stageName, projectId, a
                                     <SelectContent>
                                       <SelectItem value="PURCHASE_APPROVED">Aprobada</SelectItem>
                                       <SelectItem value="PURCHASE_COMPLETE">Completa</SelectItem>
-                                      <SelectItem value="PENDING">Pendiente</SelectItem>
+                                      <SelectItem value="PENDING">Por pagar</SelectItem>
                                       <SelectItem value="PURCHASE_CANCELED">Cancelada</SelectItem>
                                       <SelectItem value="PURCHASE_REFUNDED">Reembolsada</SelectItem>
                                       <SelectItem value="PURCHASE_PROTEST">Sol. Reembolso</SelectItem>

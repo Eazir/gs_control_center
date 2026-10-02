@@ -102,6 +102,15 @@ export class SalesController {
     return this.salesService.updateLeadStage(projectId, leadId, stageId, { id: req.user.sub, role: req.user.role });
   }
 
+  @Post('project/:projectId/leads')
+  async createLead(
+    @Param('projectId') projectId: string,
+    @Body() payload: { name: string; email: string; phone?: string; stageId: string; closerId?: string; productId?: string },
+    @Request() req: { user: JwtPayload }
+  ) {
+    return this.salesService.createManualLead(projectId, payload, { id: req.user.sub, role: req.user.role });
+  }
+
   @Post('project/:projectId/leads/:leadId')
   async updateLead(
     @Param('projectId') projectId: string,

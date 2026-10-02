@@ -33,7 +33,7 @@ export type RawSale = z.infer<typeof RawSaleSchema>;
 
 // DTO para registrar una venta manual
 export const ManualSaleSchema = z.object({
-  leadEmail: z.string().email('Email inválido'),
+  leadEmail: z.union([z.string().email('Email inválido'), z.literal('')]).optional().nullable(),
   leadName: z.string().min(1, 'El nombre es obligatorio'),
   leadPhone: z.string().optional(),
   productName: z.string().min(1, 'El producto es obligatorio'),

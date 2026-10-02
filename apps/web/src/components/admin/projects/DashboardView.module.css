@@ -233,45 +233,52 @@
 }
 .rankRow {
   display: grid;
-  grid-template-columns: 32px 100px 1fr 44px 60px 80px;
+  grid-template-columns: 24px minmax(80px, 1fr) minmax(60px, 1.5fr) 40px 55px 70px;
+  grid-template-areas: "rank name bar pct meta money";
   gap: 8px;
   align-items: center;
-  font-size: 13px;
+  font-size: 11px;
 }
 .rankBadge {
   justify-self: start;
+  grid-area: rank;
 }
 .rankPct {
   font-weight: 600;
   color: var(--gold);
   text-align: right;
+  grid-area: pct;
 }
 .rankMeta {
   color: var(--mut);
   text-align: right;
-  font-size: 12px;
+  font-size: 10px;
+  grid-area: meta;
 }
 .rankMoney {
   text-align: right;
   font-weight: 600;
+  grid-area: money;
 }
 .rowBar {
-  height: 10px;
+  height: 16px;
   background: var(--track);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
+  grid-area: bar;
 }
 .rowBarFill {
   display: block;
   height: 100%;
   background: linear-gradient(90deg, var(--gold2), var(--gold));
-  border-radius: 6px;
+  border-radius: 8px;
   transition: width 0.4s;
 }
 .rowName {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  grid-area: name;
 }
 .rowValue {
   color: var(--mut);

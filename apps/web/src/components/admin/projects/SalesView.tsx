@@ -84,6 +84,8 @@ export interface SalesViewProps {
   effectiveRole?: string;
   /** Identidad del usuario activo, usada para autoasignar la venta manual de un CLOSER. */
   currentUserId?: string;
+  pipelineStages?: { id: string; name: string }[];
+  onDataChange?: () => void;
 }
 
 /**
@@ -104,6 +106,8 @@ export function SalesView({
   projectCurrency = 'USD',
   effectiveRole = '',
   currentUserId = '',
+  pipelineStages = [],
+  onDataChange
 }: SalesViewProps) {
   // Un CLOSER solo opera sobre sus propias ventas: no puede atribuirle la venta a otro closer.
   const isCloser = effectiveRole === 'CLOSER';
@@ -114,6 +118,16 @@ export function SalesView({
   const [searchTerm, setSearchTerm] = useState('');
   
   const [selectedTxn, setSelectedTxn] = useState<any | null>(null);
+
+  // Sincronizar selectedTxn si los datos de ventas cambian tras guardar en el modal
+  useEffect(() => {
+    if (selectedTxn) {
+      const updatedTxn = sales.find((s) => s.id === selectedTxn.id);
+      if (updatedTxn && JSON.stringify(updatedTxn) !== JSON.stringify(selectedTxn)) {
+        setSelectedTxn(updatedTxn);
+      }
+    }
+  }, [sales, selectedTxn]);
 
   // Estados de Tasa de Cambio y Conversión en Vivo
   const [exchangeRate, setExchangeRate] = useState<number>(1);
@@ -251,6 +265,18 @@ export function SalesView({
     if (manualForm.currency === projectCurrency) return rawAmount;
     return rawAmount * exchangeRate;
   }, [manualForm.amount, manualForm.currency, projectCurrency, exchangeRate]);
+
+  // Lista de leads disponibles para el dropdown manual (todos)
+  const selectableLeads = useMemo(() => {
+    // Para no mostrar duplicados exactos en el dropdown, podemos agrupar por email
+    const uniqueEmails = new Set();
+    return localLeads.filter(l => {
+      if (!l.email) return true;
+      if (uniqueEmails.has(l.email)) return false;
+      uniqueEmails.add(l.email);
+      return true;
+    });
+  }, [localLeads]);
 
   // Lista de closers disponibles para el proyecto
   const availableClosers = useMemo(() => {
@@ -434,8 +460,13 @@ export function SalesView({
     e.preventDefault();
     setFormError(null);
 
-    if (!manualForm.leadName.trim() || !manualForm.leadEmail.trim()) {
-      setFormError('El nombre y correo del lead son obligatorios');
+    if (!manualForm.leadName.trim()) {
+      setFormError('El nombre del lead es obligatorio');
+      return;
+    }
+    
+    if (!manualForm.leadEmail?.trim() && !manualForm.leadPhone?.trim()) {
+      setFormError('Debes proveer un correo o un teléfono para el lead');
       return;
     }
     if (!manualForm.productName.trim()) {
@@ -728,47 +759,54 @@ export function SalesView({
                   <UserCheck className="w-4 h-4 text-primary" />
                   Prospecto / Lead
                 </Label>
-                {localLeads.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLeadMode(leadMode === 'existing' ? 'new' : 'existing');
-                      if (leadMode === 'existing') {
-                        setManualForm((prev) => ({
-                          ...prev,
-                          leadName: '',
-                          leadEmail: '',
-                          leadPhone: '',
-                        }));
-                      } else if (localLeads[0]) {
-                        handleSelectLead(localLeads[0].id);
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLeadMode(leadMode === 'existing' ? 'new' : 'existing');
+                    if (leadMode === 'existing') {
+                      setManualForm((prev) => ({
+                        ...prev,
+                        leadName: '',
+                        leadEmail: '',
+                        leadPhone: '',
+                      }));
+                    } else {
+                      const firstAvailableLead = selectableLeads[0];
+                      if (firstAvailableLead) {
+                        handleSelectLead(firstAvailableLead.id);
                       }
-                    }}
-                    className="text-[11px] text-primary hover:underline font-medium"
-                  >
-                    {leadMode === 'existing' ? '+ Registrar Nuevo Lead' : '← Seleccionar Lead del Proyecto'}
-                  </button>
-                )}
+                    }
+                  }}
+                  className="text-[11px] text-primary hover:underline font-medium"
+                >
+                  {leadMode === 'existing' ? '+ Registrar Nuevo Lead' : '← Seleccionar Lead del Proyecto'}
+                </button>
               </div>
 
-              {leadMode === 'existing' && localLeads.length > 0 ? (
+              {leadMode === 'existing' ? (
                 <div className="space-y-2">
                   <Select value={selectedLeadId} onValueChange={handleSelectLead}>
                     <SelectTrigger className="bg-background border-border text-foreground">
                       <SelectValue placeholder="Selecciona un lead disponible..." />
                     </SelectTrigger>
                     <SelectContent className="bg-popover border-border max-h-60">
-                      {localLeads.map((l) => (
-                        <SelectItem key={l.id} value={l.id}>
-                          <span className="font-medium text-foreground">{l.fullName}</span>{' '}
-                          <span className="text-muted-foreground text-xs font-mono">({l.email})</span>
+                      {selectableLeads.length > 0 ? (
+                        selectableLeads.map((l) => (
+                          <SelectItem key={l.id} value={l.id}>
+                            <span className="font-medium text-foreground">{l.fullName}</span>{' '}
+                            <span className="text-muted-foreground text-xs font-mono">({l.email})</span>
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="none" disabled>
+                          No hay leads registrados
                         </SelectItem>
-                      ))}
+                      )}
                     </SelectContent>
                   </Select>
-                  {manualForm.leadEmail && (
+                  {(manualForm.leadEmail || manualForm.leadPhone) && (
                     <div className="flex items-center gap-3 text-[11px] text-muted-foreground px-1">
-                      <span>Email: <strong className="text-foreground">{manualForm.leadEmail}</strong></span>
+                      {manualForm.leadEmail && <span>Email: <strong className="text-foreground">{manualForm.leadEmail}</strong></span>}
                       {manualForm.leadPhone && <span>Tel: <strong className="text-foreground">{manualForm.leadPhone}</strong></span>}
                     </div>
                   )}
@@ -821,58 +859,25 @@ export function SalesView({
                   <Package className="w-4 h-4 text-primary" />
                   Producto Vendido
                 </Label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProductMode(productMode === 'select' ? 'custom' : 'select');
-                    if (productMode === 'select') {
-                      setManualForm((prev) => ({ ...prev, productId: '', productName: '' }));
-                    } else {
-                      const firstP = availableProducts[0];
-                      if (firstP) {
-                        handleSelectProduct(firstP.id);
-                      }
-                    }
-                  }}
-                  className="text-[11px] text-primary hover:underline font-medium"
-                >
-                  {productMode === 'select' ? '+ Escribir otro producto manual' : '← Seleccionar del Proyecto'}
-                </button>
               </div>
 
-              {productMode === 'select' ? (
-                <Select value={selectedProductId} onValueChange={handleSelectProduct}>
-                  <SelectTrigger className="bg-background border-border text-foreground">
-                    <SelectValue placeholder="Selecciona un producto del proyecto..." />
-                  </SelectTrigger>
-                  <SelectContent className="bg-popover border-border max-h-60">
-                    {availableProducts.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        <div className="flex items-center justify-between gap-4 w-full">
-                          <span className="font-medium text-foreground">{p.name}</span>
-                          <span className="text-primary font-mono text-xs font-bold">
-                            ${p.price.toLocaleString()} {p.currency}
-                          </span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                    <SelectItem value="custom" className="text-muted-foreground italic">
-                      + Ingresar otro producto manualmente...
+              <Select value={selectedProductId} onValueChange={handleSelectProduct}>
+                <SelectTrigger className="bg-background border-border text-foreground">
+                  <SelectValue placeholder="Selecciona un producto del proyecto..." />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border max-h-60">
+                  {availableProducts.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <div className="flex items-center justify-between gap-4 w-full">
+                        <span className="font-medium text-foreground">{p.name}</span>
+                        <span className="text-primary font-mono text-xs font-bold">
+                          ${p.price.toLocaleString()} {p.currency}
+                        </span>
+                      </div>
                     </SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="space-y-1">
-                  <Input
-                    required
-                    placeholder="Nombre del producto o programa vendido"
-                    value={manualForm.productName}
-                    onChange={(e) => setManualForm({ ...manualForm, productName: e.target.value })}
-                    onFocus={(e) => e.target.select()}
-                    className="bg-background border-border text-foreground h-9 text-xs"
-                  />
-                </div>
-              )}
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* 3. SELECCIÓN DE CLOSER — solo gerencia: un CLOSER no puede
@@ -973,7 +978,7 @@ export function SalesView({
                   <SelectContent className="bg-popover border-border">
                     <SelectItem value="PURCHASE_APPROVED">Aprobada</SelectItem>
                     <SelectItem value="PURCHASE_COMPLETE">Completa</SelectItem>
-                    <SelectItem value="PENDING">Pendiente</SelectItem>
+                    <SelectItem value="PENDING">Por pagar</SelectItem>
                     <SelectItem value="PURCHASE_REFUNDED">Reembolsada</SelectItem>
                     <SelectItem value="PURCHASE_PROTEST">Sol. Reembolso</SelectItem>
                     <SelectItem value="PURCHASE_CANCELED">Cancelada</SelectItem>
@@ -1059,6 +1064,15 @@ export function SalesView({
         onClose={() => setSelectedTxn(null)}
         transaction={selectedTxn}
         allTransactions={sales as any}
+        projectId={projectId}
+        activeClosers={members.filter(m => m.roleInProject === 'CLOSER').map(m => ({ id: m.userId, name: m.userName || m.userEmail || m.userId }))}
+        pipelineStages={pipelineStages}
+        products={products as any}
+        isCloser={isCloser}
+        onSaveLead={() => {
+          loadSales();
+          if (onDataChange) onDataChange();
+        }}
       />
     </div>
   );

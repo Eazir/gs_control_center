@@ -168,7 +168,7 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
   const MK_F = mk?.facturacion || 0;
   const COM_F = com?.facturacion || 0;
 
-  type BreakdownRow = { name: string; ventas: number; facturacion: number; sharePct?: number; rank?: number };
+  type BreakdownRow = { name: string; ventas: number; facturacion: number; sharePct?: number; barPct?: number; rank?: number };
 
   let breakdownData: BreakdownRow[] = [];
   if (breakdownType === 'closer') {
@@ -178,10 +178,19 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
       facturacion: c.facturacion,
     }));
   } else if (breakdownType === 'prod') {
-    breakdownData = [...launchMetrics.productos].map((p) => ({
-      name: p.producto,
-      ventas: p.ventas,
-      facturacion: p.facturacion,
+    const prodMap = new Map<string, { ventas: number; facturacion: number }>();
+    [...launchMetrics.productos].forEach((p) => {
+      const name = p.producto || 'Desconocido';
+      const existing = prodMap.get(name) || { ventas: 0, facturacion: 0 };
+      prodMap.set(name, {
+        ventas: existing.ventas + p.ventas,
+        facturacion: existing.facturacion + p.facturacion,
+      });
+    });
+    breakdownData = Array.from(prodMap.entries()).map(([name, data]) => ({
+      name,
+      ventas: data.ventas,
+      facturacion: data.facturacion,
     }));
   } else {
     breakdownData = comparatives.sources.map((s) => ({
@@ -196,9 +205,11 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
 
   // Calcular el total de facturación para el porcentaje y asignar posición (rank)
   const totalFacturacion = breakdownData.reduce((sum, item) => sum + item.facturacion, 0);
+  const maxFacturacion = breakdownData.length > 0 ? (breakdownData[0]?.facturacion ?? 0) : 0;
   breakdownData.forEach((item, index) => {
     item.rank = index + 1;
     item.sharePct = totalFacturacion > 0 ? (item.facturacion / totalFacturacion) * 100 : 0;
+    item.barPct = maxFacturacion > 0 ? (item.facturacion / maxFacturacion) * 100 : 0;
   });
 
   const chartPoints = salesVolumeChart.map((point) => ({
@@ -472,7 +483,7 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
                   <span className={styles.rowBar}>
                     <i
                       className={styles.rowBarFill}
-                      style={{ width: `${item.sharePct ?? 0}%` }}
+                      style={{ width: `${item.barPct ?? 0}%` }}
                     />
                   </span>
                   <span className={styles.rankPct}>{pct(item.sharePct ?? 0)}</span>

@@ -159,27 +159,42 @@ export class SalesService implements OnModuleInit {
         },
       });
 
-      // Recuperación de carritos abandonados:
-      // Si la transacción actual NO es de carrito y no se encontró por ID (compra nueva),
-      // buscamos si existe un carrito abandonado previo del mismo lead (email) y mismo producto o código de oferta.
-      if (!existingSale && rawSale.status !== 'PURCHASE_OUT_OF_SHOPPING_CART' && rawSale.leadEmail) {
-        const abandonedCart = await this.prisma.sale.findFirst({
+      // Recuperación de carritos abandonados y transacciones CANCELADAS:
+      // Si no se encontró por ID exacto de la orden, buscamos si el lead ya tiene una transacción previa
+      // (coincidiendo por email o teléfono como fallback) para el mismo producto.
+      // Si la transacción previa está CANCELLED o PURCHASE_OUT_OF_SHOPPING_CART, la adoptamos.
+      if (!existingSale && (rawSale.leadEmail || rawSale.leadPhone)) {
+        const matchConditions: import('@prisma/client').Prisma.SaleWhereInput[] = [];
+        if (rawSale.leadEmail) matchConditions.push({ lead: { email: rawSale.leadEmail } });
+        if (rawSale.leadPhone) matchConditions.push({ lead: { phone: rawSale.leadPhone } });
+
+        const prevSale = await this.prisma.sale.findFirst({
           where: {
             projectId: event.projectId,
-            status: 'PURCHASE_OUT_OF_SHOPPING_CART',
-            lead: { email: rawSale.leadEmail },
-            OR: [
-              ...(rawSale.productId ? [{ productId: rawSale.productId }] : []),
-              ...(rawSale.offerCode ? [{ offerCode: rawSale.offerCode }] : []),
-              { productName: rawSale.productName }
+            OR: matchConditions,
+            AND: [
+              {
+                OR: [
+                  ...(rawSale.productId ? [{ productId: rawSale.productId }] : []),
+                  ...(rawSale.offerCode ? [{ offerCode: rawSale.offerCode }] : []),
+                  { productName: rawSale.productName }
+                ]
+              }
             ]
           },
-          orderBy: { createdAt: 'desc' }
+          orderBy: { createdAt: 'desc' },
+          include: { lead: true }
         });
 
-        if (abandonedCart) {
-          existingSale = abandonedCart;
-          this.logger.log(`[ABANDONED_CART_RECOVERY] Adoptando carrito abandonado ${abandonedCart.externalOrderId} por nueva transacción ${rawSale.externalOrderId}`);
+        if (prevSale) {
+          const isAbandonedCart = prevSale.status === 'PURCHASE_OUT_OF_SHOPPING_CART' && rawSale.status !== 'PURCHASE_OUT_OF_SHOPPING_CART';
+          const isCanceled = prevSale.status === 'CANCELED' || prevSale.status === 'CANCELLED';
+          const isPendingToCanceled = ['BILLET', 'WAITING_PAYMENT', 'PENDING'].includes(prevSale.status) && ['CANCELED', 'CANCELLED'].includes(rawSale.status);
+
+          if (isAbandonedCart || isCanceled || isPendingToCanceled) {
+            existingSale = prevSale;
+            this.logger.log(`[RECOVERY] Adoptando transacción ${prevSale.status} (${prevSale.externalOrderId}) por nueva transacción ${rawSale.externalOrderId}`);
+          }
         }
       }
 
@@ -360,8 +375,26 @@ export class SalesService implements OnModuleInit {
               (!closerId || s.closerId === closerId)
             );
 
-            // Si no hay venta manual para adoptar y el lead ya tiene OTRAS ventas,
-            // creamos un nuevo lead (1 lead x transacción)
+            if (!manualSaleToAdopt) {
+               // Encontrar la transacción más reciente del mismo producto
+               const latestSale = lead.sales
+                 .filter(s => s.productName === officialProductName)
+                 .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+                 
+               if (latestSale) {
+                 const isCanceled = ['CANCELED', 'CANCELLED', 'PURCHASE_CANCELED', 'PURCHASE_OUT_OF_SHOPPING_CART', 'ABANDONED_CART', 'CANCELADO'].includes(latestSale.status.toUpperCase());
+                 const isPendingToCanceled = ['BILLET', 'WAITING_PAYMENT', 'PENDING', 'DELAYED'].includes(latestSale.status.toUpperCase()) && ['CANCELED', 'CANCELLED', 'PURCHASE_CANCELED'].includes(rawSale.status.toUpperCase());
+
+                 if (isCanceled || isPendingToCanceled) {
+                    // Adoptamos esta venta cancelada
+                    manualSaleToAdopt = latestSale;
+                    this.logger.log(`[RECOVERY] Adoptando transacción ${latestSale.status} (${latestSale.externalOrderId}) por nueva transacción ${rawSale.externalOrderId}`);
+                 }
+               }
+            }
+
+            // Si no hay venta para adoptar y el lead ya tiene OTRAS ventas,
+            // creamos un nuevo lead (1 lead x transacción en paralelo)
             if (!manualSaleToAdopt && lead.sales.length > 0) {
               lead = null; // Forzar creación de nuevo lead abajo
             }
@@ -561,7 +594,7 @@ export class SalesService implements OnModuleInit {
       return 'recovery';
     }
     // En seguimiento
-    if (['SEGUIMIENTO', 'POR_PAGAR', 'RESERVA'].includes(sit) || ['WAITING_PAYMENT', 'DELAYED', 'PURCHASE_DELAYED', 'BILLET_PRINTED', 'PURCHASE_BILLET_PRINTED', 'ATRASADO'].includes(st) || st.includes('ESPERA DE') || st.includes('BOLETO')) {
+    if (['SEGUIMIENTO', 'POR_PAGAR', 'RESERVA'].includes(sit) || ['WAITING_PAYMENT', 'DELAYED', 'PURCHASE_DELAYED', 'BILLET_PRINTED', 'PURCHASE_BILLET_PRINTED', 'ATRASADO', 'PENDING'].includes(st) || st.includes('ESPERA DE') || st.includes('BOLETO')) {
       return 'followup';
     }
     // Sin contactar
@@ -612,6 +645,12 @@ export class SalesService implements OnModuleInit {
         projectId,
         status: { in: ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'] } 
       };
+      
+      const project = await this.prisma.project.findUnique({
+        where: { id: projectId },
+        select: { products: true }
+      });
+      const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
       
       // Aplicar filtro de aislamiento si el rol global del usuario es CLOSER
       if (user && user.role === 'CLOSER') {
@@ -682,7 +721,10 @@ export class SalesService implements OnModuleInit {
             closerId: s.lead?.closerId || null,
             pipelineStage: s.lead?.pipelineStage || null,
             situacion: s.lead?.situacion || null,
-            interestedProducts: s.lead?.interestedProducts || [],
+            interestedProducts: s.lead?.interestedProducts?.map((ip) => {
+              const match = projectProducts.find(p => p.id === ip.productId);
+              return match ? match.name : ip.productId;
+            }) || [],
           },
         };
       });
@@ -707,6 +749,12 @@ export class SalesService implements OnModuleInit {
         this.logger.warn(`Prisma model 'sale' no está disponible aún.`);
         return [];
       }
+
+      const project = await this.prisma.project.findUnique({
+        where: { id: projectId },
+        select: { products: true }
+      });
+      const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
 
       const transactions = await this.prisma.sale.findMany({
         where: { projectId },
@@ -771,7 +819,10 @@ export class SalesService implements OnModuleInit {
             phone: t.lead?.phone || null,
             closerId: t.lead?.closerId || null,
             situacion: t.lead?.situacion || null,
-            interestedProducts: t.lead?.interestedProducts?.map((ip) => ip.productId) || [],
+            interestedProducts: t.lead?.interestedProducts?.map((ip) => {
+              const match = projectProducts.find(p => p.id === ip.productId);
+              return match ? match.name : ip.productId;
+            }) || [],
           },
         };
       });
@@ -785,7 +836,7 @@ export class SalesService implements OnModuleInit {
     // Generate a unique transaction ID for manual sales
     const externalTxnId = `MANUAL-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       let lead = null;
       if (dto.leadPhone) {
         lead = await tx.lead.findFirst({ where: { projectId, phone: dto.leadPhone }, include: { sales: true } });
@@ -799,13 +850,19 @@ export class SalesService implements OnModuleInit {
         lead = null;
       }
 
+      let safeCloserId = dto.closerId;
+      if (safeCloserId) {
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(safeCloserId);
+        if (!isUUID) safeCloserId = undefined;
+      }
+
       if (lead) {
         lead = await tx.lead.update({
           where: { id: lead.id },
           data: {
             name: dto.leadName,
             phone: dto.leadPhone ?? null,
-            ...(dto.closerId ? { closerId: dto.closerId } : {}),
+            ...(safeCloserId ? { closerId: safeCloserId } : {}),
             pipelineStage: this.determineStage(dto.status)
           },
           include: { sales: true }
@@ -814,10 +871,10 @@ export class SalesService implements OnModuleInit {
         lead = await tx.lead.create({
           data: {
             projectId,
-            email: dto.leadEmail,
+            email: dto.leadEmail || null,
             name: dto.leadName,
             phone: dto.leadPhone ?? null,
-            closerId: dto.closerId ?? null,
+            closerId: safeCloserId ?? null,
             pipelineStage: this.determineStage(dto.status)
           },
           include: { sales: true }
@@ -840,16 +897,30 @@ export class SalesService implements OnModuleInit {
           status: dto.status,
           amount: dto.amount,
           currency: dto.currency,
+          closerId: safeCloserId ?? null,
           metadata: initialMetadata as Prisma.InputJsonValue,
           ...(dto.date ? { createdAt: new Date(dto.date) } : {})
         },
         select: {
           id: true,
+          createdAt: true,
         },
       });
 
-      return { saleId: sale.id, leadId: lead.id };
+      return { saleId: sale.id, leadId: lead.id, closerId: dto.closerId };
     });
+
+    if (result.closerId) {
+      this.commissionService.reconcileCloserCommissions(projectId, result.closerId, dto.date ? new Date(dto.date) : new Date()).catch(e => {
+        this.logger.error(`Error recalculating commissions:`, e);
+      });
+    } else {
+      this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_project_daily_metrics;`).catch(e => this.logger.error(e));
+      this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_closer_daily_kpis;`).catch(e => this.logger.error(e));
+      this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_product_daily_kpis;`).catch(e => this.logger.error(e));
+    }
+
+    return result;
   }
 
   /**
@@ -872,28 +943,44 @@ export class SalesService implements OnModuleInit {
   async listLeads(projectId: string, user?: { id: string; role: string }, search?: string) {
     if (!this.prisma || !('lead' in this.prisma)) return [];
 
-    const whereClause: import('@prisma/client').Prisma.LeadWhereInput = { projectId };
+    const whereClause: import('@prisma/client').Prisma.LeadWhereInput = { 
+      projectId,
+      AND: []
+    };
+
     if (user && user.role === 'CLOSER') {
-      whereClause.closerId = user.id;
+      (whereClause.AND as import('@prisma/client').Prisma.LeadWhereInput[]).push({
+        OR: [
+          { closerId: user.id },
+          { sales: { some: { closerId: user.id } } }
+        ]
+      });
     }
 
     if (search && search.trim()) {
       const q = search.trim();
-      whereClause.OR = [
-        { name: { contains: q, mode: 'insensitive' } },
-        { email: { contains: q, mode: 'insensitive' } },
-        { phone: { contains: q, mode: 'insensitive' } },
-        {
-          sales: {
-            some: {
-              OR: [
-                { externalTxnId: { contains: q, mode: 'insensitive' } },
-                { externalOrderId: { contains: q, mode: 'insensitive' } },
-              ],
+      (whereClause.AND as import('@prisma/client').Prisma.LeadWhereInput[]).push({
+        OR: [
+          { name: { contains: q, mode: 'insensitive' } },
+          { email: { contains: q, mode: 'insensitive' } },
+          { phone: { contains: q, mode: 'insensitive' } },
+          {
+            sales: {
+              some: {
+                OR: [
+                  { externalTxnId: { contains: q, mode: 'insensitive' } },
+                  { externalOrderId: { contains: q, mode: 'insensitive' } },
+                ],
+              },
             },
           },
-        },
-      ];
+        ]
+      });
+    }
+
+    // Si el array AND está vacío, lo eliminamos para evitar errores en Prisma
+    if (Array.isArray(whereClause.AND) && whereClause.AND.length === 0) {
+      delete whereClause.AND;
     }
 
     const [leads, project] = await Promise.all([
@@ -932,7 +1019,11 @@ export class SalesService implements OnModuleInit {
       if (representativeSale?.productName) {
         firstProductName = representativeSale.productName;
       } else if (lead.interestedProducts.length > 0) {
-        firstProductName = 'Interesado en Producto(s)'; // Se ajusta visualmente en el frontend si hace falta
+        const interestedNames = lead.interestedProducts.map(ip => {
+          const match = projectProducts.find(p => p.id === ip.productId);
+          return match ? match.name : ip.productId;
+        });
+        firstProductName = interestedNames.join(', ');
       }
 
       // Agrupar historial por externalOrderId para evitar transacciones repetidas en frontend
@@ -968,6 +1059,7 @@ export class SalesService implements OnModuleInit {
         lastContact: lead.updatedAt.toISOString(),
         estimatedValue,
         productName: representativeSale?.productName || firstProductName,
+        productId: representativeSale?.productId || undefined,
         closerId: representativeSale?.closerId || lead.closerId || undefined,
         source: representativeSale?.source || 'MANUAL',
         installments: representativeSale?.installments || 1,
@@ -1073,6 +1165,53 @@ export class SalesService implements OnModuleInit {
     });
 
     return { success: true };
+  }
+
+  /**
+   * Crea un lead manualmente (para pipeline).
+   */
+  async createManualLead(projectId: string, dto: { name: string; email: string; phone?: string; stageId: string; closerId?: string; productId?: string }, user?: { id: string; role: string }) {
+    let assignedCloser = dto.closerId;
+    if (user && user.role === 'CLOSER') {
+      assignedCloser = user.id; // Closer solo asigna a sí mismo
+    }
+    
+    // Validar rigurosamente que si viene algo, sea un UUID válido
+    if (assignedCloser) {
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(assignedCloser);
+      if (!isUUID) assignedCloser = undefined;
+    }
+    
+    return this.prisma.$transaction(async (tx) => {
+      let lead = await tx.lead.create({
+        data: {
+          projectId,
+          name: dto.name,
+          email: dto.email,
+          phone: dto.phone || null,
+          closerId: assignedCloser || null,
+          pipelineStage: dto.stageId || 'uncontacted',
+        }
+      });
+      
+      if (dto.productId) {
+        // Find logical product ID
+        const project = await tx.project.findUnique({ where: { id: projectId }, select: { products: true }});
+        const products = (project?.products as Array<{ id: string; name: string }>) || [];
+        const matchedProd = products.find(p => p.name.toLowerCase().includes(dto.productId!.toLowerCase()) || p.id === dto.productId);
+        const logicalId = matchedProd ? matchedProd.id : dto.productId;
+
+        await tx.leadInterestedProduct.create({
+          data: {
+            leadId: lead.id,
+            productId: logicalId,
+            note: 'Asignado en creación manual',
+          }
+        });
+      }
+      
+      return lead;
+    });
   }
 
   /**

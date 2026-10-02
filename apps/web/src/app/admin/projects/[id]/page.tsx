@@ -80,6 +80,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { fetchWithAuth } from '@/lib/api-client';
+import { getStatusBadgeClasses, getNaturalStatusName } from '@/lib/status-utils';
 import {
   ProjectSummary,
   ProductItem,
@@ -130,6 +131,7 @@ interface ProjectLead {
   closerName: string;
   closerId?: string | undefined;
   productName: string;
+  productId?: string | undefined;
   estimatedValue: number;
   source: string;
   createdAt: string;
@@ -336,12 +338,15 @@ export default function ProjectDetailsPage() {
   // closer solo recibe sus propios leads. Ocultar sus filtros y selectores de closer evita que
   // marque "Sin Asignar" u otro nombre y crea la falsa impresión de que le faltan datos.
   const isCloser = effectiveRole === 'CLOSER';
+  const isCliente = effectiveRole === 'CLIENTE';
 
   useEffect(() => {
-    if (isCloser && mainView === 'settings') {
+    if (isCliente && mainView !== 'metrics') {
+      setMainView('metrics');
+    } else if (isCloser && mainView === 'settings') {
       setMainView('pipeline');
     }
-  }, [isCloser, mainView]);
+  }, [isCloser, isCliente, mainView]);
 
   // -------------------------------------------------------------
   // CARGA INICIAL
@@ -416,40 +421,43 @@ export default function ProjectDetailsPage() {
   const loadMembersAndUsers = useCallback(async () => {
     if (!projectId) return;
     try {
-      const [membersRes, usersRes] = await Promise.all([
-        fetchWithAuth(`/projects/${projectId}/members`),
-        fetchWithAuth('/auth/users'),
-      ]);
-
+      const membersRes = await fetchWithAuth(`/projects/${projectId}/members`);
       if (membersRes.ok) {
         const memData = await membersRes.json();
         setMembers(Array.isArray(memData) ? memData : memData.members || []);
       }
 
-      if (usersRes.ok) {
-        const uData = await usersRes.json();
-        const rawUsers: AppUser[] = uData.users || [];
-        // Filtrar SUPER_ADMIN para que no aparezca en opciones de selección
-        setAllUsers(rawUsers.filter((u) => u.role !== 'SUPER_ADMIN'));
+      // Solo intentamos cargar usuarios globales si no somos CLOSER (evita error 403 en consola)
+      if (currentUser?.role !== 'CLOSER') {
+        const usersRes = await fetchWithAuth('/auth/users');
+        if (usersRes.ok) {
+          const uData = await usersRes.json();
+          const rawUsers: AppUser[] = uData.users || [];
+          // Filtrar SUPER_ADMIN para que no aparezca en opciones de selección
+          setAllUsers(rawUsers.filter((u) => u.role !== 'SUPER_ADMIN'));
+        }
       }
     } catch {
       // Manejo silencioso
     }
-  }, [projectId]);
+  }, [projectId, currentUser?.role]);
 
   const loadLeads = useCallback(async () => {
     setIsLoadingLeads(true);
     if (!projectId) return;
     try {
-      const [salesRes, leadsRes, txRes] = await Promise.all([
-        fetchWithAuth(`/sales/project/${projectId}`),
-        fetchWithAuth(`/sales/project/${projectId}/leads`),
-        fetchWithAuth(`/sales/project/${projectId}/transactions`)
-      ]);
+      const salesReq = fetchWithAuth(`/sales/project/${projectId}`);
+      const leadsReq = fetchWithAuth(`/sales/project/${projectId}/leads`);
+      
+      const [salesRes, leadsRes] = await Promise.all([salesReq, leadsReq]);
 
-      if (txRes.ok) {
-        const txData = await txRes.json();
-        setAllProjectTransactions(Array.isArray(txData) ? txData : []);
+      // Solo administradores o directores pueden ver las transacciones globales
+      if (currentUser?.role !== 'CLOSER') {
+        const txRes = await fetchWithAuth(`/sales/project/${projectId}/transactions`);
+        if (txRes.ok) {
+          const txData = await txRes.json();
+          setAllProjectTransactions(Array.isArray(txData) ? txData : []);
+        }
       }
 
       let leadsList: any[] = [];
@@ -522,7 +530,7 @@ export default function ProjectDetailsPage() {
     } finally {
       setIsLoadingLeads(false);
     }
-  }, [projectId]);
+  }, [projectId, currentUser?.role]);
 
   useEffect(() => {
     loadProject();
@@ -587,31 +595,41 @@ export default function ProjectDetailsPage() {
 
 
 
-  const handleCreateLead = (e: React.FormEvent) => {
+  const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newLeadName.trim()) return;
-
-    const newLead: ProjectLead = {
-      id: `lead-${Date.now()}`,
-      fullName: newLeadName.trim(),
-      email: newLeadEmail.trim() || 'cliente@prospecto.com',
-      phone: newLeadPhone.trim() || '+57 300 000 0000',
-      stageId: newLeadStage,
-      // El CLOSER no tiene selector de closer: el lead se registra siempre a su propio nombre.
-      closerName: isCloser
-        ? (currentUser?.fullName || 'Por Asignar')
-        : (newLeadCloser || 'Por Asignar'),
-      productName: newLeadProduct || products[0]?.name || 'Ticket General',
-      estimatedValue: Number(newLeadValue) || 997,
-      source: 'Ingreso Manual / Pipeline',
-      createdAt: new Date().toISOString(),
-    };
-
-    saveLeadsState([newLead, ...leads]);
-    setIsNewLeadOpen(false);
-    setNewLeadName('');
-    setNewLeadEmail('');
-    setNewLeadPhone('');
+    setIsSaving(true);
+    
+    try {
+      const res = await fetchWithAuth(`/sales/project/${projectId}/leads`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: newLeadName.trim(),
+          email: newLeadEmail.trim() || undefined,
+          phone: newLeadPhone.trim() || undefined,
+          stageId: newLeadStage,
+          closerId: isCloser ? currentUser?.id : (newLeadCloser || undefined),
+          productId: newLeadProduct || undefined,
+        })
+      });
+      
+      if (res.ok) {
+        setIsNewLeadOpen(false);
+        setNewLeadName('');
+        setNewLeadEmail('');
+        setNewLeadPhone('');
+        loadLeads();
+      } else {
+        const errorMsg = 'text' in res && typeof res.text === 'function' ? await res.text().catch(() => 'Error') : 'Error';
+        let parsed = errorMsg;
+        try { parsed = JSON.parse(errorMsg).message || errorMsg; } catch {}
+        alert(`Error: ${parsed}`);
+      }
+    } catch (e) {
+      alert('Error inesperado al crear lead.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // -------------------------------------------------------------
@@ -1569,7 +1587,7 @@ export default function ProjectDetailsPage() {
             <AlertTitle>No se pudo abrir el proyecto</AlertTitle>
             <AlertDescription>{error || 'El proyecto no existe o fue eliminado.'}</AlertDescription>
           </Alert>
-          <Button variant="outline" onClick={() => router.push(isCloser ? '/closer/projects' : '/admin/projects')}>
+          <Button variant="outline" onClick={() => router.push(isCloser ? '/closer/projects' : isCliente ? '/cliente/metricas' : '/admin/projects')}>
             <ArrowLeft size={14} className="mr-2" />
             Volver a la lista de proyectos
           </Button>
@@ -1585,7 +1603,7 @@ export default function ProjectDetailsPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/60">
           <div className="flex items-center gap-3.5">
             <Link
-              href={isCloser ? '/closer/projects' : '/admin/projects'}
+              href={isCloser ? '/closer/projects' : isCliente ? '/cliente/metricas' : '/admin/projects'}
               className="flex h-9 w-9 items-center justify-center rounded-xl bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors"
               title="Volver a Proyectos"
             >
@@ -1648,37 +1666,41 @@ export default function ProjectDetailsPage() {
         {/* (SUPER ADMIN, ADMIN Y DIRECTOR TIENEN ACCESO A LAS MISMAS 4)  */}
         {/* ------------------------------------------------------------- */}
         <div className="flex border-b border-border/80 gap-3 overflow-x-auto pb-1">
-          <button
-            type="button"
-            onClick={() => setMainView('pipeline')}
-            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-              mainView === 'pipeline'
-                ? 'border-primary text-primary shadow-[0_4px_12px_rgba(245,158,11,0.15)]'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Kanban size={15} />
-            <span>Pipeline</span>
-            <Badge variant="gold" className="ml-1 text-[10px] px-1.5 py-0 h-4">
-              {baseLeads.length}
-            </Badge>
-          </button>
+          {!isCliente && (
+            <>
+              <button
+                type="button"
+                onClick={() => setMainView('pipeline')}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
+                  mainView === 'pipeline'
+                    ? 'border-primary text-primary shadow-[0_4px_12px_rgba(245,158,11,0.15)]'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Kanban size={15} />
+                <span>Pipeline</span>
+                <Badge variant="gold" className="ml-1 text-[10px] px-1.5 py-0 h-4">
+                  {baseLeads.length}
+                </Badge>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => setMainView('leads')}
-            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-              mainView === 'leads'
-                ? 'border-primary text-primary shadow-[0_4px_12px_rgba(245,158,11,0.15)]'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Database size={15} />
-            <span>Base de Leads</span>
-            <Badge variant="gold" className="ml-1 text-[10px] px-1.5 py-0 h-4">
-              {baseLeads.length}
-            </Badge>
-          </button>
+              <button
+                type="button"
+                onClick={() => setMainView('leads')}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
+                  mainView === 'leads'
+                    ? 'border-primary text-primary shadow-[0_4px_12px_rgba(245,158,11,0.15)]'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Database size={15} />
+                <span>Base de Leads</span>
+                <Badge variant="gold" className="ml-1 text-[10px] px-1.5 py-0 h-4">
+                  {baseLeads.length}
+                </Badge>
+              </button>
+            </>
+          )}
 
           <button
             type="button"
@@ -1693,20 +1715,22 @@ export default function ProjectDetailsPage() {
             <span>Métricas</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setMainView('sales')}
-            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
-              mainView === 'sales'
-                ? 'border-primary text-primary shadow-[0_4px_12px_rgba(245,158,11,0.15)]'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <DollarSign size={15} />
-            <span>Ventas</span>
-          </button>
+          {!isCliente && (
+            <button
+              type="button"
+              onClick={() => setMainView('sales')}
+              className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all whitespace-nowrap ${
+                mainView === 'sales'
+                  ? 'border-primary text-primary shadow-[0_4px_12px_rgba(245,158,11,0.15)]'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <DollarSign size={15} />
+              <span>Ventas</span>
+            </button>
+          )}
 
-          {!isCloser && (
+          {!isCloser && !isCliente && (
             <button
               type="button"
               onClick={() => setMainView('transactions')}
@@ -1721,7 +1745,7 @@ export default function ProjectDetailsPage() {
             </button>
           )}
 
-          {!isCloser && (
+          {!isCloser && !isCliente && (
             <button
               type="button"
               onClick={() => setMainView('settings')}
@@ -1875,8 +1899,16 @@ export default function ProjectDetailsPage() {
                               onClick={() => {
                                 setSelectedLead(lead as unknown as LeadData);
                               }}
-                              className="p-3.5 rounded-xl border border-border/70 bg-card/40 hover:border-primary/50 hover:bg-card transition-all space-y-3 shadow-sm cursor-grab active:cursor-grabbing group relative"
+                              className="p-3.5 rounded-xl border border-border/70 bg-card/40 hover:border-primary/50 hover:bg-card transition-all space-y-3 shadow-sm cursor-grab active:cursor-grabbing group relative overflow-hidden"
                             >
+                              {/* Barra lateral derecha de estado de transacción */}
+                              {lead.latestTransaction?.status && (
+                                <div 
+                                  className={`absolute right-0 top-0 bottom-0 w-1 ${getStatusBadgeClasses(lead.latestTransaction.status).split(' ')[0]}`}
+                                  title={`Estado: ${getNaturalStatusName(lead.latestTransaction.status)}`}
+                                />
+                              )}
+
                               <div className="flex items-start justify-between gap-1">
                                 <span className="font-bold text-[13px] text-foreground leading-tight line-clamp-1">
                                   {lead.fullName}
@@ -1903,7 +1935,7 @@ export default function ProjectDetailsPage() {
                                 )}
 
                                 <div className="flex items-center justify-between text-[11px] px-1.5">
-                                  <div className="flex items-center gap-1.5 text-muted-foreground truncate" title={lead.productName}>
+                                  <div className="flex items-center gap-1.5 text-muted-foreground truncate" title={`${lead.productName || 'Sin producto'}${lead.productId ? ` - Hotmart ID: ${lead.productId}` : ''}`}>
                                     <Package size={10} />
                                     <span>{lead.productName || 'Sin producto'}</span>
                                   </div>
@@ -2024,7 +2056,7 @@ export default function ProjectDetailsPage() {
                       <SelectItem value="ALL">Todos los Closers</SelectItem>
                       <SelectItem value="Por Asignar">Por Asignar</SelectItem>
                       {closersInProject.map((c) => (
-                        <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
+                        <SelectItem key={c.id} value={c.userId}>
                           {c.userName || c.userEmail}
                         </SelectItem>
                       ))}
@@ -2233,11 +2265,13 @@ export default function ProjectDetailsPage() {
               projectId={project.id}
               products={products}
               members={members}
-              leads={leads}
+              leads={baseLeads}
               allUsers={allUsers}
               projectCurrency={project.goalsConfig?.currency || goalsConfigState.currency || 'USD'}
               effectiveRole={effectiveRole || ''}
               currentUserId={currentUser?.id || ''}
+              pipelineStages={pipelineStages}
+              onDataChange={loadLeads}
             />
           </div>
         )}
@@ -3559,9 +3593,9 @@ export default function ProjectDetailsPage() {
                           <SelectValue placeholder="Por Asignar" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="Por Asignar">Por Asignar</SelectItem>
+                          <SelectItem value="none">Por Asignar</SelectItem>
                           {activeClosersInProject.map((c) => (
-                            <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
+                            <SelectItem key={c.id} value={c.userId}>
                               {c.userName || c.userEmail}
                             </SelectItem>
                           ))}
@@ -3586,14 +3620,14 @@ export default function ProjectDetailsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_120px] gap-3">
                   <div className="space-y-1">
-                    <Label className="text-xs">Ticket / Producto</Label>
+                    <Label className="text-xs flex items-center h-[18px]">Ticket / Producto</Label>
                     <Select
                       value={newLeadProduct}
                       onValueChange={(val: string) => {
                         setNewLeadProduct(val);
-                        const found = products.find((p) => p.name === val);
+                        const found = products.find((p) => p.id === val);
                         if (found) setNewLeadValue(found.price);
                       }}
                     >
@@ -3601,9 +3635,9 @@ export default function ProjectDetailsPage() {
                         <SelectValue placeholder="-- Seleccionar producto --" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">-- Seleccionar producto --</SelectItem>
+                        <SelectItem value="none">-- Seleccionar producto --</SelectItem>
                         {products.map((p) => (
-                          <SelectItem key={p.id} value={p.name}>
+                          <SelectItem key={p.id} value={p.id}>
                             {p.name} (${p.price})
                           </SelectItem>
                         ))}
@@ -3611,7 +3645,7 @@ export default function ProjectDetailsPage() {
                     </Select>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">Valor Estimado ($)</Label>
+                    <Label className="text-xs flex items-center h-[18px]">Valor Est. ($)</Label>
                     <Input
                       type="number"
                       min="0"
@@ -3823,6 +3857,7 @@ export default function ProjectDetailsPage() {
           pipelineStages={pipelineStages}
           products={products}
           allTransactions={allProjectTransactions}
+          isCloser={isCloser}
           onSave={() => {
             loadLeads();
             setSelectedLead(null);

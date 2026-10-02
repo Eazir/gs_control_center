@@ -737,25 +737,27 @@ export default function AdminProjectsPage() {
   }, [projects, searchQuery, statusFilter]);
 
   const isDirector = currentUser?.role === 'DIRECTOR';
+  const isCliente = currentUser?.role === 'CLIENTE';
+  const isAdminOrSuper = currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN';
 
   return (
-    <AdminShell title={isDirector ? "Mis Proyectos Asignados" : "Administración de Proyectos"}>
+    <AdminShell title={isDirector ? "Mis Proyectos Asignados" : isCliente ? "Mis Proyectos" : "Administración de Proyectos"}>
       <div className="space-y-6">
         {/* CABECERA PRINCIPAL */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
               <FolderKanban className="text-primary" size={26} />
-              {isDirector ? 'Mis Proyectos Asignados' : 'Proyectos Comerciales'}
+              {isDirector || isCliente ? 'Mis Proyectos Asignados' : 'Proyectos Comerciales'}
             </h1>
             <p className="text-xs text-muted-foreground mt-1">
-              {isDirector
-                ? 'Unidades de infoproductos bajo tu dirección, gestión de equipo comercial y pipeline de ventas.'
+              {isDirector || isCliente
+                ? 'Accede al panel de métricas y rendimiento de los proyectos a los que estás vinculado.'
                 : 'Catálogo de infoproductos, tickets de venta, asignación de directores y metas comerciales.'}
             </p>
           </div>
 
-          {!isDirector && (
+          {isAdminOrSuper && (
             <Button
               onClick={openCreateModal}
               className="bg-primary text-brand-dark hover:bg-primary/90 font-bold px-4 py-2 h-10 shadow-md flex items-center gap-2"

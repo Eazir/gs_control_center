@@ -74,14 +74,14 @@ export default function DashboardPage() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [meRes, usersRes, projectsRes] = await Promise.all([
+        const [meRes, projectsRes] = await Promise.all([
           fetchWithAuth('/auth/me').catch(() => null),
-          fetchWithAuth('/auth/users').catch(() => null),
           fetchWithAuth('/projects').catch(() => null),
         ]);
 
+        let meData = null;
         if (meRes && meRes.ok) {
-          const meData = await meRes.json();
+          meData = await meRes.json();
           setActiveUser(meData);
         }
 
@@ -90,11 +90,15 @@ export default function DashboardPage() {
         let invitedCount = 0;
         let projectCount = 0;
 
-        if (usersRes && usersRes.ok) {
-          const userData = await usersRes.json();
-          userCount = userData.metrics?.total || userData.users?.length || 0;
-          activeCount = userData.metrics?.active || 0;
-          invitedCount = userData.metrics?.invited || 0;
+        // Solo cargar usuarios si NO somos CLOSER
+        if (meData && meData.role !== 'CLOSER') {
+          const usersRes = await fetchWithAuth('/auth/users').catch(() => null);
+          if (usersRes && usersRes.ok) {
+            const userData = await usersRes.json();
+            userCount = userData.metrics?.total || userData.users?.length || 0;
+            activeCount = userData.metrics?.active || 0;
+            invitedCount = userData.metrics?.invited || 0;
+          }
         }
 
         if (projectsRes && projectsRes.ok) {
@@ -271,43 +275,17 @@ export default function DashboardPage() {
   // -------------------------------------------------------------
   const clienteCards: FeatureCard[] = [
     {
-      id: 'revenue',
-      title: 'Metricas de mis proyectos',
+      id: 'projects',
+      title: 'Mis Proyectos Asignados',
       description:
-        'Visualización consolidada de solo lectura de la facturación bruta y neta, ventas concretadas y ticket promedio de tu infoproducto.',
-      icon: DollarSign,
+        'Accede a los proyectos a los que has sido agregado para visualizar su panel de métricas de desempeño.',
+      icon: FolderKanban,
       href: '/cliente/metricas',
       active: true,
-      badgeText: 'Fase 5',
-      statLabel: 'Facturación generada',
-      statValue: 'Solo Lectura',
-      actionLabel: '',
-    },
-    {
-      id: 'reports',
-      title: 'Reportes Ejecutivos',
-      description:
-        'Informes periódicos sobre la efectividad de la unidad comercial de closers, metas alcanzadas y rendimiento global del embudo.',
-      icon: BarChart3,
-      href: '/cliente/reports',
-      active: true,
-      badgeText: 'Fase 5',
-      statLabel: 'Informes mensuales',
-      statValue: 'Descarga PDF / Excel',
-      actionLabel: 'Consultar Reportes',
-    },
-    {
-      id: 'products',
-      title: 'Catálogo de Infoproductos',
-      description:
-        'Consulta las ofertas activas, cursos o mentorías operados actualmente por el equipo comercial de GrowthSell.',
-      icon: Package,
-      href: '/cliente/products',
-      active: true,
-      badgeText: 'Operativo',
-      statLabel: 'Productos en venta',
-      statValue: 'Catálogo Activo',
-      actionLabel: 'Ver Catálogo',
+      badgeText: 'Métricas',
+      statLabel: 'Proyectos',
+      statValue: isLoading ? <Skeleton className="h-4 w-16 bg-muted/60 inline-block" /> : 'Activos',
+      actionLabel: 'Ver mis Proyectos',
     },
   ];
 

@@ -32,6 +32,16 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
   const [selectedTxn, setSelectedTxn] = useState<any | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
+  // Sincronizar selectedTxn si los datos de transactions cambian tras guardar en el modal
+  useEffect(() => {
+    if (selectedTxn) {
+      const updatedTxn = transactions.find((t) => t.id === selectedTxn.id);
+      if (updatedTxn && JSON.stringify(updatedTxn) !== JSON.stringify(selectedTxn)) {
+        setSelectedTxn(updatedTxn);
+      }
+    }
+  }, [transactions, selectedTxn]);
+
   const loadTransactions = async () => {
     if (!projectId) return;
     setIsLoading(true);
@@ -242,6 +252,7 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
         onClose={() => setSelectedTxn(null)}
         transaction={selectedTxn}
         allTransactions={transactions}
+        onSaveLead={loadTransactions}
       />
     </div>
   );

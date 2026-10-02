@@ -41,7 +41,7 @@ export class KpiService {
     options: DashboardOptions
   ) {
     const dateFilterSql =
-      periodDays !== null ? `AND kpi_date >= CURRENT_DATE - CAST($2 AS INTEGER) * INTERVAL '1 day'` : '';
+      periodDays !== null ? `AND kpi_date >= CURRENT_DATE - CAST($2 AS INTEGER)` : '';
     const params: Array<string | number> =
       periodDays !== null ? [projectId, periodDays] : [projectId];
 
@@ -196,17 +196,22 @@ export class KpiService {
       ])
     );
 
-    const closerSalesTotal = rawClosers.reduce((acc, row) => acc + Number(row.ventas || 0), 0);
+    const closerFacturacionTotal = rawClosers.reduce((acc, row) => acc + Number(row.facturacion || 0), 0);
+    
+    // Sort by facturacion desc
+    rawClosers.sort((a, b) => Number(b.facturacion || 0) - Number(a.facturacion || 0));
+
     const closersRanking = rawClosers.map((row, index) => {
       const id = row.closer_id as string;
       const ventas = Number(row.ventas || 0);
+      const facturacion = Number(row.facturacion || 0);
       return {
         rank: index + 1,
         id,
         closer: userMap.get(id) || id.slice(0, 8),
         ventas,
-        facturacion: Number(row.facturacion || 0),
-        sharePct: closerSalesTotal > 0 ? (ventas / closerSalesTotal) * 100 : 0,
+        facturacion,
+        sharePct: closerFacturacionTotal > 0 ? (facturacion / closerFacturacionTotal) * 100 : 0,
       };
     });
 
