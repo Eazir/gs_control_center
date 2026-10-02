@@ -308,6 +308,7 @@ model Sale {
   
   // Valor financiero
   amount           Decimal   @db.Decimal(10, 2)
+  commissionAmount Decimal?  @map("commission_amount") @db.Decimal(10, 2)
   currency         String    @default("USD")
   
   // Metadatos

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Request, BadRequestException, Inject, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Request, BadRequestException, Inject, ForbiddenException } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { JwtAuthGuard } from '../auth';
 import { JwtPayload, ManualSaleSchema, CsvSaleImportSchema, CsvLeadImportSchema, UpdateLeadDto, UpdateTransactionStatusDto } from '@gs/contracts';
@@ -39,10 +39,11 @@ export class SalesController {
   @Get('project/:projectId/leads')
   async listProjectLeads(
     @Param('projectId') projectId: string,
+    @Query('search') search: string | undefined,
     @Request() req: { user: JwtPayload }
   ) {
     if (!this.salesService) return [];
-    return this.salesService.listLeads(projectId, { id: req.user.sub, role: req.user.role });
+    return this.salesService.listLeads(projectId, { id: req.user.sub, role: req.user.role }, search);
   }
 
   @Post('project/:projectId/leads/import-csv')
@@ -51,6 +52,11 @@ export class SalesController {
     @Body() payload: unknown[],
     @Request() req: { user: JwtPayload }
   ) {
+    // Ingesta masiva es gerencial. Un CLOSER solo administra los leads que ya tiene
+    // asignados: la matriz CASL no le concede `create Lead`, así que aquí se cierra igual.
+    if (req.user.role === 'CLOSER') {
+      throw new ForbiddenException('Los closers no pueden importar leads de forma masiva.');
+    }
     if (!Array.isArray(payload)) {
       throw new BadRequestException('El payload debe ser un array de leads');
     }
@@ -145,6 +151,11 @@ export class SalesController {
     @Body() payload: unknown[],
     @Request() req: { user: JwtPayload }
   ) {
+    // Igual que la importación de leads: cargar transacciones es tarea gerencial.
+    // Cerrarlo aquí evita que un CLOSER registre ventas ajenas o altere comisiones.
+    if (req.user.role === 'CLOSER') {
+      throw new ForbiddenException('Los closers no pueden importar transacciones de forma masiva.');
+    }
     if (!Array.isArray(payload)) {
       throw new BadRequestException('El payload debe ser un array de ventas');
     }

@@ -210,6 +210,46 @@ async function runAuthVerification() {
     console.info(`  ✔ Login exitoso como CLOSER: ${closerLoginData.user.email}`);
 
     // -------------------------------------------------------------------------
+    // 8b. Test: CLOSER no puede ejecutar ingesta masiva (importación CSV)
+    // -------------------------------------------------------------------------
+    console.info('\n8b. Verificando que el CLOSER recibe 403 en los endpoints de importación...');
+
+    const closerAccessToken = (closerLoginData as unknown as {
+      tokens?: { accessToken?: string };
+    }).tokens?.accessToken;
+
+    if (!closerAccessToken) {
+      throw new Error('El login del CLOSER no devolvió accessToken; no se puede verificar el RBAC de importación.');
+    }
+
+    // Un projectId arbitrario es suficiente: el guard de rol debe responder antes de tocar la BD.
+    const guardedImportRoutes = [
+      '/sales/project/00000000-0000-0000-0000-000000000000/leads/import-csv',
+      '/sales/project/00000000-0000-0000-0000-000000000000/import-csv',
+    ];
+
+    for (const route of guardedImportRoutes) {
+      const importRes = await fetch(`${BASE_URL}${route}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${closerAccessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([]),
+      });
+
+      if (importRes.status !== 403) {
+        const body = await importRes.text().catch(() => '');
+        throw new Error(
+          `VIOLACIÓN: CLOSER obtuvo ${importRes.status} (se esperaba 403) en ${route}: ${body}`
+        );
+      }
+      console.info(`  ✔ 403 Correcto para CLOSER en ${route}`);
+    }
+
+    console.info('  ✔ Ingesta masiva bloqueada para CLOSER en ambos endpoints.');
+
+    // -------------------------------------------------------------------------
     // 9. Test: Logout y denylist de Redis (POST /auth/logout)
     // -------------------------------------------------------------------------
     console.info('\n9. Probando logout y revocación de Access Token en Redis...');

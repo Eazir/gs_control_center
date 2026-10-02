@@ -39,14 +39,14 @@ export interface SalesViewLead {
   id: string;
   fullName: string;
   email: string;
-  phone?: string | null;
-  closerId?: string | null;
-  closerName?: string | null;
-  productName?: string | null;
-  estimatedValue?: number;
-  stageId?: string;
-  source?: string;
-  createdAt?: string;
+  phone?: string | null | undefined;
+  closerId?: string | null | undefined;
+  closerName?: string | null | undefined;
+  productName?: string | null | undefined;
+  estimatedValue?: number | undefined;
+  stageId?: string | undefined;
+  source?: string | undefined;
+  createdAt?: string | undefined;
 }
 
 export interface SalesViewUser {
@@ -80,6 +80,10 @@ export interface SalesViewProps {
   leads?: SalesViewLead[];
   allUsers?: SalesViewUser[];
   projectCurrency?: string;
+  /** Rol efectivo dentro del proyecto. Un CLOSER nunca elige closer: se le autoasigna. */
+  effectiveRole?: string;
+  /** Identidad del usuario activo, usada para autoasignar la venta manual de un CLOSER. */
+  currentUserId?: string;
 }
 
 /**
@@ -98,7 +102,12 @@ export function SalesView({
   leads = [], 
   allUsers = [],
   projectCurrency = 'USD',
+  effectiveRole = '',
+  currentUserId = '',
 }: SalesViewProps) {
+  // Un CLOSER solo opera sobre sus propias ventas: no puede atribuirle la venta a otro closer.
+  const isCloser = effectiveRole === 'CLOSER';
+
   const [sales, setSales] = useState<SaleListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -276,6 +285,12 @@ export function SalesView({
     return list;
   }, [members, allUsers]);
 
+  // Nombre legible del CLOSER activo, reutilizado para mostrar la autoasignación en el modal.
+  const selfCloserName = useMemo(() => {
+    const match = availableClosers.find((c) => c.id === currentUserId);
+    return match?.name || 'Mi usuario';
+  }, [availableClosers, currentUserId]);
+
   // Carga de ventas desde la API
   const loadSales = async () => {
     if (!projectId) return;
@@ -313,7 +328,8 @@ export function SalesView({
     let initialLeadName = '';
     let initialLeadEmail = '';
     let initialLeadPhone = '';
-    let initialCloserId = 'none';
+    // El CLOSER se autoasigna: parte siempre de su propio id, nunca del lead preseleccionado.
+    let initialCloserId = isCloser ? (currentUserId || 'none') : 'none';
 
     const firstLead = localLeads[0];
     if (hasLeads && firstLead) {
@@ -321,7 +337,7 @@ export function SalesView({
       initialLeadName = firstLead.fullName;
       initialLeadEmail = firstLead.email;
       initialLeadPhone = firstLead.phone || '';
-      if (firstLead.closerId) {
+      if (!isCloser && firstLead.closerId) {
         initialCloserId = firstLead.closerId;
       }
     } else {
@@ -370,9 +386,9 @@ export function SalesView({
         leadName: lead.fullName,
         leadEmail: lead.email,
         leadPhone: lead.phone || '',
-        closerId: lead.closerId || prev.closerId,
+        closerId: isCloser ? currentUserId : (lead.closerId || prev.closerId),
       }));
-      if (lead.closerId) {
+      if (!isCloser && lead.closerId) {
         setSelectedCloserId(lead.closerId);
       }
     }
@@ -859,32 +875,48 @@ export function SalesView({
               )}
             </div>
 
-            {/* 3. SELECCIÓN DE CLOSER */}
-            <div className="space-y-2 border border-border/70 rounded-lg p-3.5 bg-muted/20">
-              <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                <Users className="w-4 h-4 text-primary" />
-                Closer que cerró la venta
-              </Label>
-              <Select value={selectedCloserId} onValueChange={handleSelectCloser}>
-                <SelectTrigger className="bg-background border-border text-foreground">
-                  <SelectValue placeholder="Asignar Closer..." />
-                </SelectTrigger>
-                <SelectContent className="bg-popover border-border max-h-60">
-                  <SelectItem value="none">
-                    <span className="text-muted-foreground">Sin Closer / Venta Directa (Orgánica)</span>
-                  </SelectItem>
-                  {availableClosers.map((closer) => (
-                    <SelectItem key={closer.id} value={closer.id}>
-                      <span className="font-medium text-foreground">{closer.name}</span>{' '}
-                      <span className="text-muted-foreground text-xs font-mono">({closer.email})</span>
+            {/* 3. SELECCIÓN DE CLOSER — solo gerencia: un CLOSER no puede
+                atribuir su venta a otra persona ni registrar ventas orgánicas. */}
+            {isCloser ? (
+              <div className="space-y-2 border border-border/70 rounded-lg p-3.5 bg-muted/20">
+                <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-primary" />
+                  Closer que cerró la venta
+                </Label>
+                <div className="flex h-9 items-center rounded-md border border-border/70 bg-background px-3 text-xs font-medium text-foreground">
+                  {selfCloserName}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  La venta se asigna automáticamente a ti y computa tu comisión según las metas del proyecto.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2 border border-border/70 rounded-lg p-3.5 bg-muted/20">
+                <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-primary" />
+                  Closer que cerró la venta
+                </Label>
+                <Select value={selectedCloserId} onValueChange={handleSelectCloser}>
+                  <SelectTrigger className="bg-background border-border text-foreground">
+                    <SelectValue placeholder="Asignar Closer..." />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border-border max-h-60">
+                    <SelectItem value="none">
+                      <span className="text-muted-foreground">Sin Closer / Venta Directa (Orgánica)</span>
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[11px] text-muted-foreground">
-                Se computará la comisión del closer seleccionado según las metas configuradas del proyecto.
-              </p>
-            </div>
+                    {availableClosers.map((closer) => (
+                      <SelectItem key={closer.id} value={closer.id}>
+                        <span className="font-medium text-foreground">{closer.name}</span>{' '}
+                        <span className="text-muted-foreground text-xs font-mono">({closer.email})</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Se computará la comisión del closer seleccionado según las metas configuradas del proyecto.
+                </p>
+              </div>
+            )}
 
             {/* 4. MONTO, MONEDA Y ESTADO */}
             <div className="grid grid-cols-3 gap-3">

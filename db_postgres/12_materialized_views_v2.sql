@@ -26,8 +26,11 @@ SELECT
     COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND closer_id IS NOT NULL) AS comercial_ventas,
     
     -- hotmart vs externas
-    COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND external_txn_id LIKE 'HP%') AS hotmart_ventas,
-    COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND (external_txn_id NOT LIKE 'HP%' OR external_txn_id IS NULL)) AS externas_ventas
+    COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND source = 'HOTMART') AS hotmart_ventas,
+    COUNT(*) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo') AND source != 'HOTMART') AS externas_ventas,
+
+    -- comisiones sumadas
+    SUM(commission_amount) FILTER (WHERE status IN ('APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'PURCHASE_COMPLETE', 'APROBADO', 'COMPLETA', 'COMPLETO', 'Aprobado', 'Completo')) AS sum_commission
 
 FROM sales.sales
 GROUP BY project_id, DATE(created_at);

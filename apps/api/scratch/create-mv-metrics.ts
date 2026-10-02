@@ -29,8 +29,8 @@ async function main() {
         COUNT(*) FILTER (WHERE status IN (${validStatuses}) AND closer_id IS NOT NULL) AS comercial_ventas,
         
         -- hotmart vs externas
-        COUNT(*) FILTER (WHERE status IN (${validStatuses}) AND external_txn_id LIKE 'HP%') AS hotmart_ventas,
-        COUNT(*) FILTER (WHERE status IN (${validStatuses}) AND (external_txn_id NOT LIKE 'HP%' OR external_txn_id IS NULL)) AS externas_ventas
+        COUNT(*) FILTER (WHERE status IN (${validStatuses}) AND source = 'HOTMART') AS hotmart_ventas,
+        COUNT(*) FILTER (WHERE status IN (${validStatuses}) AND source != 'HOTMART') AS externas_ventas
 
       FROM sales.sales
       GROUP BY project_id, DATE(created_at);

@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { subject } from '@casl/ability';
 import { CaslAbilityFactory } from '../src/core/casl/casl-ability.factory';
-import { Lead, Project, Invitation } from '../src/core/casl/subjects';
+import { Lead, Project, Invitation, Sale } from '../src/core/casl/subjects';
 import { withRls } from '../src/core/database/with-rls';
 
 async function runCaslAndRlsVerification() {
@@ -65,7 +65,12 @@ async function runCaslAndRlsVerification() {
   if (closerAbility.can('manage', Project)) {
     throw new Error('VIOLACIÓN: CLOSER NO debe poder administrar Project!');
   }
-  console.info('  ✔ 3. CLOSER aislado: solo ve/edita leads propios, bloqueado de otros closers y configuración de proyectos.');
+  // La ingesta masiva (importación CSV de leads y de transacciones) es gerencial:
+  // implica crear entidades, y un CLOSER solo puede leer/editar lo que ya tiene asignado.
+  if (closerAbility.can('create', Lead) || closerAbility.can('create', Sale)) {
+    throw new Error('VIOLACIÓN: CLOSER NO debe poder crear Lead ni Sale (ingesta masiva)!');
+  }
+  console.info('  ✔ 3. CLOSER aislado: solo ve/edita leads propios, sin ingesta masiva, bloqueado de otros closers y configuración de proyectos.');
 
   // 4. CLIENTE: Solo lectura de Dashboard y Project; estrictamente PROHIBIDO ver leads o closers
   if (!clienteAbility.can('read', 'Dashboard') || !clienteAbility.can('read', Project)) {

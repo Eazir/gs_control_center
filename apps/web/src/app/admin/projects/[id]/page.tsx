@@ -44,6 +44,8 @@ import {
   User,
   UploadCloud,
   RefreshCw,
+  X,
+  Receipt,
 } from 'lucide-react';
 import { AdminShell } from '@/components/layout/admin-shell';
 import { DashboardView } from '@/components/admin/projects/DashboardView';
@@ -126,16 +128,17 @@ interface ProjectLead {
   phone: string;
   stageId: string;
   closerName: string;
-  closerId?: string;
+  closerId?: string | undefined;
   productName: string;
   estimatedValue: number;
   source: string;
   createdAt: string;
-  installments?: number;
-  offerCode?: string;
-  pipelineSubstatus?: string;
-  situacion?: string;
-  latestTransaction?: TransactionData | null;
+  installments?: number | undefined;
+  offerCode?: string | undefined;
+  pipelineSubstatus?: string | undefined;
+  situacion?: string | undefined;
+  latestTransaction?: TransactionData | null | undefined;
+  history?: unknown[] | undefined;
 }
 
 const DEFAULT_STAGES: PipelineStageConfig[] = [
@@ -329,12 +332,16 @@ export default function ProjectDetailsPage() {
 
   const isDirector = effectiveRole === 'DIRECTOR';
   const isAdminOrSuper = effectiveRole === 'SUPER_ADMIN' || effectiveRole === 'ADMIN';
+  // El backend ya fuerza `closerId = user.id` para CLOSER (sales.service.ts), por lo que el
+  // closer solo recibe sus propios leads. Ocultar sus filtros y selectores de closer evita que
+  // marque "Sin Asignar" u otro nombre y crea la falsa impresión de que le faltan datos.
+  const isCloser = effectiveRole === 'CLOSER';
 
   useEffect(() => {
-    if (effectiveRole === 'CLOSER' && mainView === 'settings') {
+    if (isCloser && mainView === 'settings') {
       setMainView('pipeline');
     }
-  }, [effectiveRole, mainView]);
+  }, [isCloser, mainView]);
 
   // -------------------------------------------------------------
   // CARGA INICIAL
@@ -590,7 +597,10 @@ export default function ProjectDetailsPage() {
       email: newLeadEmail.trim() || 'cliente@prospecto.com',
       phone: newLeadPhone.trim() || '+57 300 000 0000',
       stageId: newLeadStage,
-      closerName: newLeadCloser || 'Por Asignar',
+      // El CLOSER no tiene selector de closer: el lead se registra siempre a su propio nombre.
+      closerName: isCloser
+        ? (currentUser?.fullName || 'Por Asignar')
+        : (newLeadCloser || 'Por Asignar'),
       productName: newLeadProduct || products[0]?.name || 'Ticket General',
       estimatedValue: Number(newLeadValue) || 997,
       source: 'Ingreso Manual / Pipeline',
@@ -1344,23 +1354,100 @@ export default function ProjectDetailsPage() {
   }, [leads, members, allUsers]);
 
   // -------------------------------------------------------------
+  // MAPA DE CÓDIGOS DE TRANSACCIÓN POR LEAD
+  // -------------------------------------------------------------
+  const leadTxnCodesMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const tx of allProjectTransactions) {
+      const leadId = tx.lead?.id;
+      if (!leadId) continue;
+      const codes = map.get(leadId) || [];
+      if (tx.externalTxnId) codes.push(tx.externalTxnId.toLowerCase());
+      if (tx.externalOrderId) codes.push(tx.externalOrderId.toLowerCase());
+      if (tx.id) codes.push(tx.id.toLowerCase());
+      map.set(leadId, codes);
+    }
+    return map;
+  }, [allProjectTransactions]);
+
+  // Función utilitaria para evaluar si un lead coincide con la búsqueda
+  const checkLeadMatch = useCallback((l: ProjectLead, query: string): boolean => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+
+    // 1. Nombre del lead
+    if (l.fullName && l.fullName.toLowerCase().includes(q)) return true;
+
+    // 2. Email
+    if (l.email && l.email.toLowerCase().includes(q)) return true;
+
+    // 3. Teléfono (texto directo y dígitos numéricos limpios)
+    if (l.phone) {
+      if (l.phone.toLowerCase().includes(q)) return true;
+      const cleanPhone = l.phone.replace(/\D/g, '');
+      const cleanQuery = q.replace(/\D/g, '');
+      if (cleanQuery.length >= 3 && cleanPhone.includes(cleanQuery)) return true;
+    }
+
+    // 4. Producto (adicional conveniente)
+    if (l.productName && l.productName.toLowerCase().includes(q)) return true;
+
+    // 5. Código de transacción
+    // 5a. Transacción más reciente (directo en el lead)
+    if (l.latestTransaction) {
+      if (l.latestTransaction.externalTxnId?.toLowerCase().includes(q)) return true;
+      if (l.latestTransaction.externalOrderId?.toLowerCase().includes(q)) return true;
+      if (l.latestTransaction.id?.toLowerCase().includes(q)) return true;
+    }
+
+    // 5b. Historial de transacciones del lead (agrupado o plano)
+    const historyList = (l.latestTransaction?.history || (l as unknown as { history?: unknown[] }).history) as unknown[];
+    if (Array.isArray(historyList)) {
+      for (const item of historyList) {
+        if (!item || typeof item !== 'object') continue;
+        const entry = item as Record<string, unknown>;
+        if (typeof entry.orderId === 'string' && entry.orderId.toLowerCase().includes(q)) return true;
+        if (typeof entry.externalTxnId === 'string' && entry.externalTxnId.toLowerCase().includes(q)) return true;
+        if (typeof entry.externalOrderId === 'string' && entry.externalOrderId.toLowerCase().includes(q)) return true;
+        if (typeof entry.id === 'string' && entry.id.toLowerCase().includes(q)) return true;
+
+        if (Array.isArray(entry.transactions)) {
+          for (const subTx of entry.transactions) {
+            if (!subTx || typeof subTx !== 'object') continue;
+            const tx = subTx as Record<string, unknown>;
+            if (typeof tx.externalTxnId === 'string' && tx.externalTxnId.toLowerCase().includes(q)) return true;
+            if (typeof tx.externalOrderId === 'string' && tx.externalOrderId.toLowerCase().includes(q)) return true;
+            if (typeof tx.id === 'string' && tx.id.toLowerCase().includes(q)) return true;
+          }
+        }
+      }
+    }
+
+    // 5c. Historial global del proyecto cruzado por Lead ID
+    const leadKey = l.id || (l as unknown as { leadId?: string }).leadId || '';
+    const codes = leadTxnCodesMap.get(leadKey) || (leadKey !== (l as unknown as { leadId?: string }).leadId ? leadTxnCodesMap.get((l as unknown as { leadId?: string }).leadId || '') : undefined);
+    if (codes && codes.some((code) => code.includes(q))) {
+      return true;
+    }
+
+    return false;
+  }, [leadTxnCodesMap]);
+
+  // -------------------------------------------------------------
   // FILTRADO DE LEADS (PARA PIPELINE KANBAN)
   // -------------------------------------------------------------
   const filteredLeads = useMemo(() => {
+    const q = leadSearch.trim();
     return enrichedLeads.filter((l) => {
-      const matchSearch =
-        leadSearch === '' ||
-        l.fullName.toLowerCase().includes(leadSearch.toLowerCase()) ||
-        l.email.toLowerCase().includes(leadSearch.toLowerCase()) ||
-        l.phone.includes(leadSearch) ||
-        (l.productName && l.productName.toLowerCase().includes(leadSearch.toLowerCase()));
-
-      const matchCloser = closerFilter === 'ALL' || l.closerName === closerFilter;
+      const matchSearch = checkLeadMatch(l, q);
+      // Un CLOSER jamás filtra por closer: el backend ya le devuelve solo sus leads y el
+      // selector no está montado en su UI, así que un estado residual no debe ocultar nada.
+      const matchCloser = isCloser ? true : closerFilter === 'ALL' || l.closerName === closerFilter;
       const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
 
       return matchSearch && matchCloser && matchStage;
     });
-  }, [enrichedLeads, leadSearch, closerFilter, stageFilter]);
+  }, [enrichedLeads, leadSearch, closerFilter, stageFilter, checkLeadMatch, isCloser]);
 
   // -------------------------------------------------------------
   // ENRICHMENT Y FILTRADO DE LEADS (PARA BASE DE LEADS)
@@ -1386,20 +1473,15 @@ export default function ProjectDetailsPage() {
   }, [baseLeads, members, allUsers]);
 
   const filteredBaseLeads = useMemo(() => {
+    const q = leadSearch.trim();
     return enrichedBaseLeads.filter((l) => {
-      const matchSearch =
-        leadSearch === '' ||
-        l.fullName.toLowerCase().includes(leadSearch.toLowerCase()) ||
-        l.email.toLowerCase().includes(leadSearch.toLowerCase()) ||
-        l.phone.includes(leadSearch) ||
-        (l.productName && l.productName.toLowerCase().includes(leadSearch.toLowerCase()));
-
-      const matchCloser = closerFilter === 'ALL' || l.closerName === closerFilter;
+      const matchSearch = checkLeadMatch(l, q);
+      const matchCloser = isCloser ? true : closerFilter === 'ALL' || l.closerName === closerFilter;
       const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
 
       return matchSearch && matchCloser && matchStage;
     });
-  }, [enrichedBaseLeads, leadSearch, closerFilter, stageFilter]);
+  }, [enrichedBaseLeads, leadSearch, closerFilter, stageFilter, checkLeadMatch, isCloser]);
 
   // Reset pagination on filter change
   useEffect(() => {
@@ -1487,7 +1569,7 @@ export default function ProjectDetailsPage() {
             <AlertTitle>No se pudo abrir el proyecto</AlertTitle>
             <AlertDescription>{error || 'El proyecto no existe o fue eliminado.'}</AlertDescription>
           </Alert>
-          <Button variant="outline" onClick={() => router.push(effectiveRole === 'CLOSER' ? '/closer/projects' : '/admin/projects')}>
+          <Button variant="outline" onClick={() => router.push(isCloser ? '/closer/projects' : '/admin/projects')}>
             <ArrowLeft size={14} className="mr-2" />
             Volver a la lista de proyectos
           </Button>
@@ -1503,7 +1585,7 @@ export default function ProjectDetailsPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/60">
           <div className="flex items-center gap-3.5">
             <Link
-              href={effectiveRole === 'CLOSER' ? '/closer/projects' : '/admin/projects'}
+              href={isCloser ? '/closer/projects' : '/admin/projects'}
               className="flex h-9 w-9 items-center justify-center rounded-xl bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors"
               title="Volver a Proyectos"
             >
@@ -1624,7 +1706,7 @@ export default function ProjectDetailsPage() {
             <span>Ventas</span>
           </button>
 
-          {effectiveRole !== 'CLOSER' && (
+          {!isCloser && (
             <button
               type="button"
               onClick={() => setMainView('transactions')}
@@ -1639,7 +1721,7 @@ export default function ProjectDetailsPage() {
             </button>
           )}
 
-          {effectiveRole !== 'CLOSER' && (
+          {!isCloser && (
             <button
               type="button"
               onClick={() => setMainView('settings')}
@@ -1661,35 +1743,61 @@ export default function ProjectDetailsPage() {
         {/* ============================================================= */}
         {mainView === 'pipeline' && (
           <div className="space-y-4 animate-in fade-in-50">
-            {/* Filtro rápido por closer */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card/40 p-3 rounded-xl border border-border/60">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Filter size={14} className="text-primary" />
-                  <span className="text-xs font-semibold text-foreground">Closer:</span>
-                  <Select value={closerFilter} onValueChange={setCloserFilter}>
-                    <SelectTrigger className="bg-[#0B0D13] text-xs h-8 w-44">
-                      <SelectValue placeholder="Todos los Closers" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ALL">Todos los Closers</SelectItem>
-                      <SelectItem value="Por Asignar">Sin Asignar</SelectItem>
-                      {closersInProject.map((c) => (
-                        <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
-                          {c.userName || c.userEmail}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+            {/* Toolbar de búsqueda y filtros del Pipeline */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-card/40 p-3 rounded-xl border border-border/60">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
+                {/* Barra de búsqueda para el pipeline */}
+                <div className="relative w-full sm:w-80">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={14} />
+                  <Input
+                    placeholder="Buscar por nombre, email, teléfono o transacción..."
+                    value={leadSearch}
+                    onChange={(e) => setLeadSearch(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    className="pl-9 pr-7 bg-[#0B0D13] border-border text-xs h-8"
+                  />
+                  {leadSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setLeadSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs p-0.5 rounded hover:bg-muted/30 transition-colors"
+                      title="Limpiar búsqueda"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
                 </div>
 
-                <Button variant="outline" size="sm" onClick={() => loadLeads()} className="h-8 text-xs border-border/80 ml-2" disabled={isLoadingLeads}>
+                {/* Filtro rápido por closer — solo gerencia: el CLOSER ya viene aislado
+                    por `closerId` desde el backend y no debe poder acotar su propio tablero. */}
+                {!isCloser && (
+                  <div className="flex items-center gap-2">
+                    <Filter size={14} className="text-primary shrink-0" />
+                    <span className="text-xs font-semibold text-foreground shrink-0">Closer:</span>
+                    <Select value={closerFilter} onValueChange={setCloserFilter}>
+                      <SelectTrigger className="bg-[#0B0D13] text-xs h-8 w-44">
+                        <SelectValue placeholder="Todos los Closers" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">Todos los Closers</SelectItem>
+                        <SelectItem value="Por Asignar">Sin Asignar</SelectItem>
+                        {closersInProject.map((c) => (
+                          <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
+                            {c.userName || c.userEmail}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <Button variant="outline" size="sm" onClick={() => loadLeads()} className="h-8 text-xs border-border/80" disabled={isLoadingLeads}>
                   <RefreshCw size={14} className={`mr-2 ${isLoadingLeads ? 'animate-spin' : ''}`} />
                   Refrescar
                 </Button>
               </div>
 
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
                 <span>Total Leads: <strong className="text-foreground">{filteredBaseLeads.length}</strong></span>
                 <span>•</span>
                 <span>Facturación Ganada: <strong className="text-emerald-400 font-mono">${metricsCalc.totalWon.toLocaleString()} USD</strong></span>
@@ -1806,6 +1914,13 @@ export default function ProjectDetailsPage() {
                                   )}
                                 </div>
 
+                                {lead.latestTransaction?.externalTxnId && (
+                                  <div className="flex items-center gap-1.5 text-[10px] px-1.5 text-muted-foreground/80 font-mono truncate" title={`Transacción: ${lead.latestTransaction.externalTxnId}`}>
+                                    <Receipt size={10} className="shrink-0 text-primary/70" />
+                                    <span className="truncate">{lead.latestTransaction.externalTxnId}</span>
+                                  </div>
+                                )}
+
                                 <div className="flex items-center gap-1.5 text-[11px] px-1.5">
                                   <User size={10} className="text-muted-foreground" />
                                   <span className="text-muted-foreground font-medium truncate">{lead.closerName || 'Sin closer'}</span>
@@ -1842,9 +1957,9 @@ export default function ProjectDetailsPage() {
                             </div>
                           );
                         })}
-                        {stageLeads.length > 20 && (
+                        {stageLeads.length > (leadSearch ? 100 : 20) && (
                           <div className="text-center py-2 text-[11px] font-bold text-muted-foreground bg-muted/20 rounded-xl border border-border/50">
-                            + {stageLeads.length - 20} prospectos ocultos
+                            + {stageLeads.length - (leadSearch ? 100 : 20)} prospectos ocultos
                           </div>
                         )}
                       </>
@@ -1867,12 +1982,22 @@ export default function ProjectDetailsPage() {
               <div className="relative w-full md:w-80">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
                 <Input
-                  placeholder="Buscar por nombre, email o teléfono..."
+                  placeholder="Buscar por nombre, email, teléfono o transacción..."
                   value={leadSearch}
                   onChange={(e) => setLeadSearch(e.target.value)}
                   onFocus={(e) => e.target.select()}
-                  className="pl-9 bg-[#0B0D13] border-border text-xs h-9"
+                  className="pl-9 pr-7 bg-[#0B0D13] border-border text-xs h-9"
                 />
+                {leadSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setLeadSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs p-0.5 rounded hover:bg-muted/30 transition-colors"
+                    title="Limpiar búsqueda"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
@@ -1890,20 +2015,22 @@ export default function ProjectDetailsPage() {
                   </SelectContent>
                 </Select>
 
-                <Select value={closerFilter} onValueChange={setCloserFilter}>
-                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-40">
-                    <SelectValue placeholder="Todos los Closers" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">Todos los Closers</SelectItem>
-                    <SelectItem value="Por Asignar">Por Asignar</SelectItem>
-                    {closersInProject.map((c) => (
-                      <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
-                        {c.userName || c.userEmail}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {!isCloser && (
+                  <Select value={closerFilter} onValueChange={setCloserFilter}>
+                    <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-40">
+                      <SelectValue placeholder="Todos los Closers" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">Todos los Closers</SelectItem>
+                      <SelectItem value="Por Asignar">Por Asignar</SelectItem>
+                      {closersInProject.map((c) => (
+                        <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
+                          {c.userName || c.userEmail}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
 
                 <Button
                   variant="outline"
@@ -1915,15 +2042,19 @@ export default function ProjectDetailsPage() {
                   <RefreshCw size={13} className={`mr-1 ${isLoadingLeads ? 'animate-spin' : ''}`} />
                   Refrescar
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsLeadImportModalOpen(true)}
-                  className="text-xs h-9 border-border text-foreground hover:bg-muted"
-                >
-                  <UploadCloud size={13} className="mr-1" />
-                  Importar CSV
-                </Button>
+                {/* Importación masiva: la ingesta de datos es gerencial. El CLOSER solo
+                    administra los leads que ya tiene asignados, nunca carga lotes nuevos. */}
+                {!isCloser && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsLeadImportModalOpen(true)}
+                    className="text-xs h-9 border-border text-foreground hover:bg-muted"
+                  >
+                    <UploadCloud size={13} className="mr-1" />
+                    Importar CSV
+                  </Button>
+                )}
                 <Button
                   variant="gold"
                   size="sm"
@@ -2064,20 +2195,22 @@ export default function ProjectDetailsPage() {
         )}
 
         {/* ============================================================= */}
-        {/* MODAL: IMPORTACIÓN CSV DE LEADS                               */}
+        {/* MODAL: IMPORTACIÓN CSV DE LEADS (solo gerencia)               */}
         {/* ============================================================= */}
-        <Dialog open={isLeadImportModalOpen} onOpenChange={setIsLeadImportModalOpen}>
-          <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 overflow-y-auto max-h-[90vh]">
-            <CsvImporter 
-              projectId={projectId}
-              mode="leads" 
-              onClose={() => {
-                setIsLeadImportModalOpen(false);
-                loadLeads();
-              }} 
-            />
-          </DialogContent>
-        </Dialog>
+        {!isCloser && (
+          <Dialog open={isLeadImportModalOpen} onOpenChange={setIsLeadImportModalOpen}>
+            <DialogContent className="bg-background border-border text-foreground max-w-4xl p-0 overflow-y-auto max-h-[90vh]">
+              <CsvImporter 
+                projectId={projectId}
+                mode="leads" 
+                onClose={() => {
+                  setIsLeadImportModalOpen(false);
+                  loadLeads();
+                }} 
+              />
+            </DialogContent>
+          </Dialog>
+        )}
 
         {/* ============================================================= */}
         {/* VISTA 3: MÉTRICAS (DASHBOARD DE VENTAS Y KPIS)                */}
@@ -2087,6 +2220,10 @@ export default function ProjectDetailsPage() {
             <DashboardView 
               projectId={projectId} 
               effectiveRole={effectiveRole || ''}
+              goalsConfig={goalsConfigState}
+              commissionConfig={commissionConfigState}
+              members={members}
+              products={products}
             />
           </div>
         )}
@@ -2103,6 +2240,8 @@ export default function ProjectDetailsPage() {
               leads={leads}
               allUsers={allUsers}
               projectCurrency={project.goalsConfig?.currency || goalsConfigState.currency || 'USD'}
+              effectiveRole={effectiveRole || ''}
+              currentUserId={currentUser?.id || ''}
             />
           </div>
         )}
@@ -2117,7 +2256,7 @@ export default function ProjectDetailsPage() {
         {/* ============================================================= */}
         {/* VISTA 4: PANEL DE CONTROL (5 CONFIGURACIONES DEL PROYECTO)    */}
         {/* ============================================================= */}
-        {mainView === 'settings' && effectiveRole !== 'CLOSER' && (
+        {mainView === 'settings' && !isCloser && (
           <div className="space-y-6 animate-in fade-in-50">
             {/* SUB-PESTAÑAS DE CONFIGURACIÓN */}
             <div className="flex border-b border-border/80 gap-2 overflow-x-auto pb-1">
@@ -3408,22 +3547,32 @@ export default function ProjectDetailsPage() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Closer Asignado</Label>
-                    <Select value={newLeadCloser} onValueChange={setNewLeadCloser}>
-                      <SelectTrigger className="h-9 text-xs">
-                        <SelectValue placeholder="Por Asignar" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Por Asignar">Por Asignar</SelectItem>
-                        {activeClosersInProject.map((c) => (
-                          <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
-                            {c.userName || c.userEmail}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {/* El CLOSER no asigna: su lead nace a su propio nombre (ver handleCreateLead). */}
+                  {isCloser ? (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Closer Asignado</Label>
+                      <div className="flex h-9 items-center rounded-md border border-border/70 bg-muted/30 px-3 text-xs font-medium text-foreground">
+                        {currentUser?.fullName || 'Mi usuario'}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Closer Asignado</Label>
+                      <Select value={newLeadCloser} onValueChange={setNewLeadCloser}>
+                        <SelectTrigger className="h-9 text-xs">
+                          <SelectValue placeholder="Por Asignar" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Por Asignar">Por Asignar</SelectItem>
+                          {activeClosersInProject.map((c) => (
+                            <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
+                              {c.userName || c.userEmail}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="space-y-1">
                     <Label className="text-xs">Etapa Inicial</Label>
                     <Select value={newLeadStage} onValueChange={setNewLeadStage}>

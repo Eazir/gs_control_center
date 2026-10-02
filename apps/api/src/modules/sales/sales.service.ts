@@ -9,6 +9,8 @@ import { IntegrationsService } from '../integrations';
 import { EventStatus, Prisma, LeadSituacion } from '@prisma/client';
 import { withRls } from '../../core/database';
 
+import { CommissionService } from './commission.service';
+
 @Injectable()
 export class SalesService implements OnModuleInit {
   private readonly logger = new Logger(SalesService.name);
@@ -24,6 +26,8 @@ export class SalesService implements OnModuleInit {
     private readonly listProjectProductsUseCase: ListProjectProductsUseCase,
     @Inject(IntegrationsService)
     private readonly integrationsService: IntegrationsService,
+    @Inject(CommissionService)
+    private readonly commissionService: CommissionService,
   ) {}
 
   onModuleInit() {
@@ -865,12 +869,31 @@ export class SalesService implements OnModuleInit {
    * Obtiene la base de leads de un proyecto con sus métricas sumadas.
    * Aplica aislamiento de permisos si el usuario es CLOSER.
    */
-  async listLeads(projectId: string, user?: { id: string; role: string }) {
+  async listLeads(projectId: string, user?: { id: string; role: string }, search?: string) {
     if (!this.prisma || !('lead' in this.prisma)) return [];
 
     const whereClause: import('@prisma/client').Prisma.LeadWhereInput = { projectId };
     if (user && user.role === 'CLOSER') {
       whereClause.closerId = user.id;
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      whereClause.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { email: { contains: q, mode: 'insensitive' } },
+        { phone: { contains: q, mode: 'insensitive' } },
+        {
+          sales: {
+            some: {
+              OR: [
+                { externalTxnId: { contains: q, mode: 'insensitive' } },
+                { externalOrderId: { contains: q, mode: 'insensitive' } },
+              ],
+            },
+          },
+        },
+      ];
     }
 
     const [leads, project] = await Promise.all([
@@ -1190,6 +1213,13 @@ export class SalesService implements OnModuleInit {
       }
     });
 
+    // Re-calcular comisiones asíncronamente si tiene closer asignado
+    if (sale.closerId) {
+      this.commissionService.reconcileCloserCommissions(projectId, sale.closerId, sale.createdAt || new Date()).catch(e => {
+        this.logger.error(`Error recalculating commissions:`, e);
+      });
+    }
+
     return { success: true };
   }
 
@@ -1383,7 +1413,9 @@ export class SalesService implements OnModuleInit {
     if (!dto.currency || dto.currency === 'USD') finalCurrency = matchedProd.currency || 'USD';
     if (dto.installments === 1 || dto.installments === undefined) finalInstallments = matchedProd.installments || 1;
 
-    return withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
+    let saleResult: Prisma.SaleGetPayload<{}> | null = null;
+
+    await withRls(this.prisma, { userId: requestedBy, role: 'ADMIN' }, async (tx: Prisma.TransactionClient) => {
       // 3. Crear o actualizar Lead comprador (Priorizar Teléfono)
       let lead = null;
       if (dto.leadPhone) {
@@ -1504,9 +1536,19 @@ export class SalesService implements OnModuleInit {
             }
           }
         });
-        return sale;
+        saleResult = sale;
       }
     });
+
+    // Recalcular comisiones
+    const resultToCast = saleResult as Prisma.SaleGetPayload<{}> | null;
+    if (resultToCast && resultToCast.closerId) {
+      this.commissionService.reconcileCloserCommissions(projectId, resultToCast.closerId, resultToCast.createdAt || new Date()).catch(e => {
+        this.logger.error(`Error recalculating commissions after CSV import:`, e);
+      });
+    }
+
+    return resultToCast;
   }
 }
 

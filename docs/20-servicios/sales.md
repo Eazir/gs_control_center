@@ -42,11 +42,27 @@ Representa cada evento financiero histórico. Un Lead puede tener N Sales.
   Retorna **todas** las transacciones (trazabilidad completa).
   *RBAC:* Restringido. **Denegado para CLOSERs**. Requiere rol gerencial.
 
+- `POST /sales/project/:projectId/leads/import-csv`
+  Importa lotes de leads desde CSV, en chunks, con mapeo de columnas por el usuario.
+  *RBAC:* Ingesta masiva. **Denegado para CLOSERs**: solo pueden crear leads individualmente
+  desde su propio tablero, y no pueden asignarlos a otro closer.
+
+- `POST /sales/project/:projectId/import-csv`
+  Importa lotes de transacciones/ventas desde CSV.
+  *RBAC:* Ingesta masiva. **Denegado para CLOSERs**: no pueden cargar ventas manualmente ni
+  atribuir una venta a otro closer.
+
 ## Vistas de Interfaz
 En el Frontend (`apps/web`), este módulo se refleja en:
 - **SalesView (Ventas):** Vista orientada a desempeño y liquidación, restringida a ventas cerradas.
 - **TransactionsView (Transacciones):** Tabla global de trazabilidad técnica (reembolsos, rechazos, pendientes).
 - **TransactionDetailModal:** Panel de lectura pasiva para auditar cualquier transacción (quién la hizo, qué código de oferta usó, SCK, y el log JSON completo del webhook original).
+
+En las vistas de Pipeline y Base de Leads, el filtro por closer y el botón **Importar CSV**
+se ocultan cuando el rol efectivo es `CLOSER`. Como el backend ya fuerza `closerId = user.id`,
+el filtro sería un no-op que además puede inducir a error (filtrar por "Sin Asignar" y creer que
+faltan datos). El CLOSER tampoco puede registrar una venta a nombre de otro closer: el modal de
+**Venta Manual** se autoasigna y muestra el nombre del propio usuario en lugar del selector.
 
 ## Extensibilidad Futura (Pendiente)
 - Integración nativa con pasarelas como Stripe o GoHighLevel.
