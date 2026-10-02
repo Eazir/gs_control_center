@@ -25,7 +25,7 @@ CMD ["pnpm", "--filter", "api", "dev"]
 FROM deps AS builder
 COPY --from=pruner /app/out/full/ .
 RUN pnpm --filter api prisma generate \
- && pnpm --filter api build \
+ && pnpm exec turbo run build --filter=api \
  && pnpm deploy --filter=api --prod /app/deploy
 
 # --- Runtime ---

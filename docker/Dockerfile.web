@@ -18,7 +18,7 @@ CMD ["pnpm", "--filter", "web", "dev"]
 FROM deps AS builder
 COPY --from=pruner /app/out/full/ .
 ENV NEXT_TELEMETRY_DISABLED=1 STANDALONE=1
-RUN pnpm --filter web build
+RUN pnpm exec turbo run build --filter=web
 
 # output: 'standalone' en next.config: la imagen final queda en ~150 MB
 # en vez de arrastrar node_modules completo.

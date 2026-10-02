@@ -1,0 +1,42 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend modular de gs_control_center (NestJS multi-rol: api, ingest, worker)",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts --role=api",
+    "dev:ingest": "tsx watch src/main.ts --role=ingest",
+    "dev:worker": "tsx watch src/main.ts --role=worker",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "prisma": "prisma",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "test:auth": "tsx test/verify-auth.ts",
+    "test:casl": "tsx test/verify-casl-rls.ts",
+    "users:list": "tsx scripts/manage-users.ts list",
+    "users:invite": "tsx scripts/manage-users.ts invite"
+  },
+  "dependencies": {
+    "dotenv": "17.4.2",
+    "argon2": "0.41.1",
+    "rxjs": "7.8.2",
+    "ioredis": "5.11.1",
+    "resend": "6.31.0",
+    "reflect-metadata": "0.2.2",
+    "@prisma/client": "6.19.3",
+    "@casl/ability": "7.0.1",
+    "@nestjs/core": "11.2.5",
+    "@gs/contracts": "@gs/contracts@file:///D:/INFO_PC/Documents/GrowtShell/.GS_ControlCenter/files/gs_project/packages/contracts",
+    "express": "5.2.1",
+    "cookie-parser": "1.4.7",
+    "@nestjs/common": "11.2.5",
+    "@nestjs/jwt": "11.0.2",
+    "zod": "3.25.76",
+    "@nestjs/platform-express": "11.2.5"
+  },
+  "devDependencies": {},
+  "optionalDependencies": {}
+}

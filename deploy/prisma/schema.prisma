@@ -1,0 +1,344 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["auth", "projects", "integrations", "sales"]
+}
+
+// ============================================================================
+// SCHEMA: auth
+// ============================================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  DIRECTOR
+  CLOSER
+  CLIENTE
+
+  @@schema("auth")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  INVITED
+  DELETED
+
+  @@schema("auth")
+}
+
+model User {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String      @unique
+  passwordHash    String      @map("password_hash")
+  fullName        String      @map("full_name")
+  phone           String?
+  role            UserRole
+  status          UserStatus  @default(INVITED)
+  mfaSecretEnc    String?     @map("mfa_secret_enc")
+  mfaEnabled      Boolean     @default(false) @map("mfa_enabled")
+  lastLoginAt     DateTime?   @map("last_login_at") @db.Timestamptz
+  failedAttempts  Int         @default(0) @map("failed_attempts") @db.SmallInt
+  lockedUntil     DateTime?   @map("locked_until") @db.Timestamptz
+  preferences     Json        @default("{}") @db.JsonB
+  metadata        Json        @default("{}") @db.JsonB
+  createdBy       String?     @map("created_by") @db.Uuid
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime?   @map("deleted_at") @db.Timestamptz
+
+  sessions        Session[]
+  invitationsSent Invitation[] @relation("InvitedBy")
+
+  @@index([role], map: "users_idx_users_role")
+  @@map("users")
+  @@schema("auth")
+}
+
+model Session {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshHash  String    @map("refresh_hash")
+  ip           String?
+  userAgent    String?   @map("user_agent")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId], map: "sessions_idx_sessions_user")
+  @@index([expiresAt], map: "sessions_idx_sessions_expires")
+  @@map("sessions")
+  @@schema("auth")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  targetId   String?  @map("target_id") @db.Uuid
+  targetType String?  @map("target_type")
+  ip         String?
+  details    Json     @default("{}") @db.JsonB
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId, createdAt(sort: Desc)], map: "audit_log_idx_audit_user")
+  @@index([action, createdAt(sort: Desc)], map: "audit_log_idx_audit_action")
+  @@map("audit_log")
+  @@schema("auth")
+}
+
+model Invitation {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String
+  role        UserRole
+  tokenHash   String    @map("token_hash")
+  invitedById String    @map("invited_by_id") @db.Uuid
+  invitedBy   User      @relation("InvitedBy", fields: [invitedById], references: [id])
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  acceptedAt  DateTime? @map("accepted_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("invitations")
+  @@schema("auth")
+}
+
+// ============================================================================
+// SCHEMA: projects
+// ============================================================================
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+
+  @@schema("projects")
+}
+
+enum ProjectRole {
+  DIRECTOR
+  CLOSER
+  CLIENTE
+
+  @@schema("projects")
+}
+
+model Project {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String
+  slug              String        @unique
+  description       String?
+  status            ProjectStatus @default(DRAFT)
+  directorId        String?       @map("director_id") @db.Uuid
+  products          Json          @default("[]") @db.JsonB
+  goalsConfig       Json          @default("{}") @map("goals_config") @db.JsonB
+  commissionConfig  Json          @default("{}") @map("commission_config") @db.JsonB
+  automationConfig  Json?         @default("{}") @map("automation_config") @db.JsonB
+  settings          Json?         @default("{}") @db.JsonB
+  startDate         DateTime?     @map("start_date") @db.Date
+  endDate           DateTime?     @map("end_date") @db.Date
+  createdBy         String?       @map("created_by") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz
+
+  members           ProjectUser[]
+
+  @@index([status], map: "projects_idx_projects_status")
+  @@index([directorId], map: "projects_idx_projects_director")
+  @@map("projects")
+  @@schema("projects")
+}
+
+model ProjectUser {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId     String      @map("project_id") @db.Uuid
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId        String      @map("user_id") @db.Uuid
+  roleInProject ProjectRole @map("role_in_project")
+  permissions   Json?       @default("{}") @db.JsonB
+  sckCodes      String[]    @default([]) @map("sck_codes")
+  assignedBy    String?     @map("assigned_by") @db.Uuid
+  assignedAt    DateTime    @default(now()) @map("assigned_at") @db.Timestamptz
+
+  @@unique([projectId, userId])
+  @@index([userId], map: "project_users_idx_project_users_user")
+  @@map("project_users")
+  @@schema("projects")
+}
+
+// ============================================================================
+// SCHEMA: integrations
+// ============================================================================
+
+enum ProviderType {
+  HOTMART
+  CENTRALIZE
+  GHL
+  CUSTOM
+
+  @@schema("integrations")
+}
+
+enum EventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  SKIPPED_BY_DATE
+  SKIPPED_UNKNOWN_PRODUCT
+  DUPLICATE
+
+  @@schema("integrations")
+}
+
+model IntegrationConfig {
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId           String       @map("project_id") @db.Uuid
+  provider            ProviderType
+  isActive            Boolean      @default(true) @map("is_active")
+  credentialsEnc      String?      @map("credentials_enc")
+  validFrom           DateTime?    @map("valid_from") @db.Timestamptz
+  ignoreSubsequent    Boolean      @default(true) @map("ignore_subsequent")
+  customSettings      Json         @default("{}") @map("custom_settings") @db.JsonB
+  createdBy           String?      @map("created_by") @db.Uuid
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([projectId, provider])
+  @@index([projectId], map: "integrations_idx_config_project")
+  @@map("integration_configs")
+  @@schema("integrations")
+}
+
+model IntegrationEvent {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String       @map("project_id") @db.Uuid
+  provider    ProviderType
+  eventType   String       @map("event_type")
+  payload     Json         @db.JsonB
+  status      EventStatus  @default(RECEIVED)
+  errorReason String?      @map("error_reason")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  processedAt DateTime?    @map("processed_at") @db.Timestamptz
+
+  @@index([projectId, status], map: "integrations_idx_events_project_status")
+  @@index([createdAt], map: "integrations_idx_events_created")
+  @@map("integration_events")
+  @@schema("integrations")
+}
+
+// ============================================================================
+// SCHEMA: sales
+// ============================================================================
+
+enum LeadSituacion {
+  POR_PAGAR
+  SEGUIMIENTO
+  NO_RESPONDE
+  NO_CALIFICA
+  YA_HABIA_ENTRADO
+  PAGO_COMPLETO
+  PAGO_A_CUOTAS
+  RESERVA
+  SIN_WSP
+
+  @@schema("sales")
+}
+
+model Lead {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String    @map("project_id") @db.Uuid
+  
+  // Datos de contacto
+  name            String?
+  email           String?
+  phone           String?
+  
+  // Pipeline
+  pipelineStage   String         @default("uncontacted") @map("pipeline_stage")
+  situacion       LeadSituacion? @map("situacion")
+  closerId        String?        @map("closer_id") @db.Uuid // Referencia lógica a auth.users(id)
+  
+  // Métricas rápidas cacheadas (opcional pero útil)
+  totalValue      Decimal   @default(0) @map("total_value") @db.Decimal(10, 2)
+  
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+
+  sales           Sale[]
+  interestedProducts LeadInterestedProduct[]
+
+  @@index([projectId, closerId])
+  @@index([projectId, pipelineStage])
+  @@map("leads")
+  @@schema("sales")
+}
+
+model Sale {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId        String    @map("project_id") @db.Uuid
+  
+  // Relación con el Lead dentro del mismo schema
+  leadId           String    @map("lead_id") @db.Uuid
+  lead             Lead      @relation(fields: [leadId], references: [id])
+  
+  // Idempotencia y Trazabilidad (Contrato innegociable de Integrations)
+  source           String    // 'HOTMART', 'MANUAL', 'CENTRALIZE', etc.
+  externalOrderId  String    @map("external_order_id") // Ej: SC12345 (Transacción de compra)
+  externalTxnId    String    @map("external_txn_id")   // Ej: HP12345 (Transacción individual: cuota, reembolso, etc)
+  
+  // Información de Negocio
+  productName      String    @map("product_name")
+  productId        String?   @map("product_id")        // ID del producto en Hotmart
+  offerCode        String?   @map("offer_code")        // Código de oferta registrado
+  sck              String?   @map("sck")               // Source Checkout Key / Tracking
+  closerId         String?   @map("closer_id") @db.Uuid // Referencia lógica a auth.users(id)
+  status           String    // 'APPROVED', 'REFUNDED', 'CHARGEBACK', 'CANCELED', 'BILLET_PRINTED', etc.
+  
+  // Pipeline (Oportunidad)
+  pipelineStage    String    @default("uncontacted") @map("pipeline_stage")
+  pipelineSubstatus String?  @map("pipeline_substatus")
+  
+  // Valor financiero
+  amount           Decimal   @db.Decimal(10, 2)
+  commissionAmount Decimal?  @map("commission_amount") @db.Decimal(10, 2)
+  currency         String    @default("USD")
+  
+  // Metadatos
+  paymentMethod    String?   @map("payment_method")
+  installments     Int?      @default(1)
+  metadata         Json?     @default("{}") @map("metadata") @db.JsonB
+  
+  // Trazabilidad
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Garantiza que JAMÁS se procese la misma transacción dos veces
+  @@unique([source, externalOrderId, externalTxnId])
+  @@index([projectId, status])
+  @@index([projectId, closerId])
+  @@map("sales")
+  @@schema("sales")
+}
+
+model LeadInterestedProduct {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId    String   @map("lead_id") @db.Uuid
+  productId String   @map("product_id")
+  note      String?  
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  lead      Lead     @relation(fields: [leadId], references: [id])
+  // NOTA: Para no forzar FK cross-schema con ProjectProduct, productId queda solo lógico.
+
+  @@unique([leadId, productId])
+  @@map("lead_interested_products")
+  @@schema("sales")
+}
