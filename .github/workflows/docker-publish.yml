@@ -12,8 +12,10 @@ env:
   REGISTRY: ghcr.io
   # Se usa el nombre del propietario o de la organización (ej: growthshell)
   # automáticamente y en minúsculas.
-  IMAGE_API: ghcr.io/${{ github.repository_owner }}/gs-api
-  IMAGE_WEB: ghcr.io/${{ github.repository_owner }}/gs-web
+  # Convertimos el owner a minúsculas, por si tiene mayúsculas (ej: Eazir -> eazir)
+  # ya que Docker no permite nombres de repositorios con mayúsculas.
+  IMAGE_API: ghcr.io/eazir/gs-api
+  IMAGE_WEB: ghcr.io/eazir/gs-web
 
 jobs:
   build-and-push:

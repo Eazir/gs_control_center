@@ -64,6 +64,10 @@ services:
       replicas: 1        # subir a 2 si la cola crece en lanzamientos
       resources: { limits: { memory: 1G, cpus: "1.0" } }
 
+  migrate:
+    image: ghcr.io/${GH_ORG}/gs-api:${TAG:-latest}
+    build: !reset null
+
   web:
     image: ghcr.io/${GH_ORG}/gs-web:${TAG:-latest}
     build: !reset null
