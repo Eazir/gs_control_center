@@ -2217,13 +2217,9 @@ export default function ProjectDetailsPage() {
         {/* ============================================================= */}
         {mainView === 'metrics' && (
           <div className="pt-2 pb-6">
-            <DashboardView 
-              projectId={projectId} 
+            <DashboardView
+              projectId={projectId}
               effectiveRole={effectiveRole || ''}
-              goalsConfig={goalsConfigState}
-              commissionConfig={commissionConfigState}
-              members={members}
-              products={products}
             />
           </div>
         )}

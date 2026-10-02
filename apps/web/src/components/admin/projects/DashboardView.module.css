@@ -84,7 +84,7 @@
 }
 .kpis {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -148,6 +148,8 @@
   place-items: center;
   font-size: 11px;
   color: var(--mut);
+  padding: 0;
+  cursor: pointer;
 }
 .step.on {
   background: var(--gold);
@@ -223,6 +225,36 @@
   font-size: 13px;
   margin: 9px 0;
 }
+.rankList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+.rankRow {
+  display: grid;
+  grid-template-columns: 32px 100px 1fr 44px 60px 80px;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+.rankBadge {
+  justify-self: start;
+}
+.rankPct {
+  font-weight: 600;
+  color: var(--gold);
+  text-align: right;
+}
+.rankMeta {
+  color: var(--mut);
+  text-align: right;
+  font-size: 12px;
+}
+.rankMoney {
+  text-align: right;
+  font-weight: 600;
+}
 .rowBar {
   height: 10px;
   background: var(--track);
@@ -285,4 +317,11 @@
   .kpis { grid-template-columns: repeat(2, 1fr); }
   .grid { grid-template-columns: 1fr; }
   .row { grid-template-columns: 90px 1fr auto; }
+  .rankRow {
+    grid-template-columns: 40px 1fr 52px;
+    grid-template-areas:
+      "rank name name"
+      "bar bar pct"
+      "meta meta money";
+  }
 }
