@@ -1,5 +1,5 @@
 # GrowthShell Control Center
-
+by Eazir_David
 Plataforma unificada para operar unidades comerciales de infoproductos. Permite centralizar ventas, leads, pipelines, integraciones (Stripe, Hotmart, N8N) y analíticas en una sola aplicación de alto rendimiento.
 
 ## 🚀 Despliegue a Producción (VPS)
