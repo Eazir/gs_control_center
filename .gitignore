@@ -48,3 +48,12 @@ coverage/
 # CRÍTICO: .agents/ y AGENTS.md deben estar siempre versionados en el repositorio
 !.agents/
 !AGENTS.md
+
+# Documentos internos
+AJUSTES_STACK.md
+ANTIGRAVITY_SETUP.md
+ARQUITECTURA_EXTENSIBLE.md
+DESPLIEGUE_DOCKER.md
+DOCUMENTACION.md
+PLAN_DE_ACCION.md
+PROJECT_CONTEXT.md

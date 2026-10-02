@@ -24,7 +24,11 @@ En tu proveedor de dominios (GoDaddy, Hostinger, etc.), crea Registros tipo **A*
    ```bash
    cp .env.example .env
    ```
-2. Reemplaza todos los secretos por contraseñas fuertes (puedes generarlas con `openssl rand -hex 32`).
+2. Reemplaza todos los secretos por contraseñas fuertes. Puedes generar las claves criptográficas para JWT y AES-256 (32 bytes) usando nuestra herramienta incluida:
+   ```bash
+   node scripts/crypto-tool.mjs generate-key
+   ```
+   *Cópialas y pégalas en `ENCRYPTION_MASTER_KEY`, `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET`.*
 3. En `ACME_EMAIL` pon tu correo real (Let's Encrypt lo usará para notificar expiración de certificados SSL).
 4. Asegúrate de configurar la cuenta de **Resend** para los correos y configurar **Google Drive** con Rclone para los backups (ver `scripts/backup.sh`).
 
@@ -36,6 +40,12 @@ make prod-deploy
 Y una vez arriba, ejecuta las migraciones de la base de datos:
 ```bash
 make prod-migrate
+```
+
+### 5. Crear el Primer Super Admin
+Para poder acceder a la plataforma por primera vez, necesitas sembrar el primer superusuario (reemplaza los datos por los tuyos). Esto inyecta el hash Argon2id de forma segura a PostgreSQL:
+```bash
+node scripts/crypto-tool.mjs seed-admin admin@growth-sell.xyz "ContraseñaSegura123!" "Tu Nombre" | docker exec -i gs_control_center-postgres-1 psql -U gs_admin -d gs_control_center
 ```
 
 ¡Listo! Tu plataforma estará disponible en `https://app.growth-sell.xyz`.
