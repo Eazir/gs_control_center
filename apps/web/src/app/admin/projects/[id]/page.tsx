@@ -1333,7 +1333,7 @@ export default function ProjectDetailsPage() {
 
   // Copiar URL de webhook e id
   const copyWebhookUrl = () => {
-    const baseHost = tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com';
+    const baseHost = tunnelUrl.trim().replace(/\/$/, '') || 'https://hooks.growth-sell.xyz';
     const url = `${baseHost}/integrations/hotmart/webhook/${projectId}`;
     navigator.clipboard.writeText(url);
     setCopiedWebhookUrl(true);
@@ -2662,7 +2662,7 @@ export default function ProjectDetailsPage() {
                     <div className="flex items-center gap-2">
                       <Input
                         readOnly
-                        value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com')}/integrations/hotmart/webhook/${projectId}`}
+                        value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://hooks.growth-sell.xyz')}/integrations/hotmart/webhook/${projectId}`}
                         className="bg-[#0B0D13] font-mono text-[11px] h-8 text-muted-foreground select-all"
                       />
                       <Button
@@ -3741,7 +3741,7 @@ export default function ProjectDetailsPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const url = `${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com')}/integrations/hotmart/webhook/${projectId}`;
+                      const url = `${(tunnelUrl.trim().replace(/\/$/, '') || 'https://hooks.growth-sell.xyz')}/integrations/hotmart/webhook/${projectId}`;
                       navigator.clipboard.writeText(url);
                       setCopiedHotmartUrl(true);
                       setTimeout(() => setCopiedHotmartUrl(false), 2000);

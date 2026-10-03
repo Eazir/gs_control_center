@@ -18,6 +18,9 @@ CMD ["pnpm", "--filter", "web", "dev"]
 FROM deps AS builder
 COPY --from=pruner /app/out/full/ .
 ENV NEXT_TELEMETRY_DISABLED=1 STANDALONE=1
+# NEXT_PUBLIC_* se incrusta en el bundle en tiempo de build.
+ARG NEXT_PUBLIC_API_URL=https://api.growth-sell.xyz
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 RUN pnpm exec turbo run build --filter=web
 
 # output: 'standalone' en next.config: la imagen final queda en ~150 MB

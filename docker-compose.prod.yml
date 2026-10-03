@@ -19,16 +19,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - letsencrypt:/letsencrypt
     restart: unless-stopped
-    deploy:
-      resources: { limits: { memory: 256M } }
 
   postgres:
     deploy:
       resources: { limits: { memory: 4G, cpus: "2.0" } }
 
   redis:
-    deploy:
-      resources: { limits: { memory: 1200M, cpus: "0.5" } }
 
   api:
     image: ghcr.io/${GH_ORG}/gs-api:${TAG:-latest}
@@ -37,9 +33,9 @@ services:
       - traefik.enable=true
       - traefik.http.routers.api.rule=Host(`${API_DOMAIN}`)
       - traefik.http.routers.api.tls.certresolver=le
+      - traefik.http.routers.api.middlewares=gzip
+      - traefik.http.middlewares.gzip.compress=true
       - traefik.http.services.api.loadbalancer.server.port=3001
-    deploy:
-      resources: { limits: { memory: 1G, cpus: "1.0" } }
 
   ingest:
     image: ghcr.io/${GH_ORG}/gs-api:${TAG:-latest}
@@ -49,20 +45,19 @@ services:
       # Host separado para los webhooks: se puede escalar y limitar aparte.
       - traefik.http.routers.ingest.rule=Host(`${INGEST_DOMAIN}`)
       - traefik.http.routers.ingest.tls.certresolver=le
-      - traefik.http.routers.ingest.middlewares=ingest-ratelimit
+      - traefik.http.routers.ingest.middlewares=ingest-ratelimit,gzip
       - traefik.http.middlewares.ingest-ratelimit.ratelimit.average=100
       - traefik.http.middlewares.ingest-ratelimit.ratelimit.burst=300
+      - traefik.http.middlewares.gzip.compress=true
       - traefik.http.services.ingest.loadbalancer.server.port=3002
     deploy:
       replicas: 1
-      resources: { limits: { memory: 512M, cpus: "0.5" } }
 
   worker:
     image: ghcr.io/${GH_ORG}/gs-api:${TAG:-latest}
     build: !reset null
     deploy:
       replicas: 1        # subir a 2 si la cola crece en lanzamientos
-      resources: { limits: { memory: 1G, cpus: "1.0" } }
 
   migrate:
     image: ghcr.io/${GH_ORG}/gs-api:${TAG:-latest}
@@ -75,9 +70,9 @@ services:
       - traefik.enable=true
       - traefik.http.routers.web.rule=Host(`${APP_DOMAIN}`)
       - traefik.http.routers.web.tls.certresolver=le
+      - traefik.http.routers.web.middlewares=gzip
+      - traefik.http.middlewares.gzip.compress=true
       - traefik.http.services.web.loadbalancer.server.port=3000
-    deploy:
-      resources: { limits: { memory: 1G, cpus: "1.0" } }
 
   n8n:
     labels:
@@ -85,8 +80,6 @@ services:
       - traefik.http.routers.n8n.rule=Host(`${N8N_DOMAIN}`)
       - traefik.http.routers.n8n.tls.certresolver=le
       - traefik.http.services.n8n.loadbalancer.server.port=5678
-    deploy:
-      resources: { limits: { memory: 1G, cpus: "0.5" } }
 
   docs:
     labels:
@@ -94,11 +87,10 @@ services:
       - traefik.http.routers.docs.rule=Host(`${DOCS_DOMAIN}`)
       - traefik.http.routers.docs.tls.certresolver=le
       # El manual incluye detalles operativos: no debe ser público.
-      - traefik.http.routers.docs.middlewares=docs-auth
+      - traefik.http.routers.docs.middlewares=docs-auth,gzip
+      - traefik.http.middlewares.gzip.compress=true
       - traefik.http.middlewares.docs-auth.basicauth.users=${DOCS_BASIC_AUTH}
       - traefik.http.services.docs.loadbalancer.server.port=80
-    deploy:
-      resources: { limits: { memory: 128M } }
 
   backup:
     image: postgres:16-alpine
@@ -112,8 +104,6 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
-    deploy:
-      resources: { limits: { memory: 256M } }
 
 volumes:
   letsencrypt:
