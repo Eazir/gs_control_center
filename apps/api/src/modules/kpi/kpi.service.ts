@@ -105,6 +105,34 @@ export class KpiService {
       facturacion: Number(row.facturacion || 0),
     }));
 
+    // Bruto/Detalle del equipo comercial = SOLO ventas con closer_id (NO marketing).
+    // Usamos sales.sales directamente y replicamos el FILTER de aprobado de las MVs
+    // para ser consistentes con la regla reciente de normalización de estados.
+    const rawCommercialProducts = await this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+      `
+      SELECT
+        product_name,
+        product_id,
+        COUNT(*) AS ventas,
+        SUM(amount) AS facturacion
+      FROM sales.sales
+      WHERE project_id = $1::uuid
+        AND closer_id IS NOT NULL
+        AND status IN ('APPROVED','PURCHASE_APPROVED','COMPLETE','PURCHASE_COMPLETE','APROBADO','COMPLETA','COMPLETO')
+        ${periodDays !== null ? 'AND created_at::date >= CURRENT_DATE - CAST($2 AS INTEGER)' : ''}
+      GROUP BY product_name, product_id
+      ORDER BY facturacion DESC
+    `,
+      ...params
+    );
+
+    const commercialProductRows: ProductKpiRow[] = rawCommercialProducts.map((row) => ({
+      productName: String(row.product_name ?? ''),
+      productId: row.product_id ? String(row.product_id) : null,
+      ventas: Number(row.ventas || 0),
+      facturacion: Number(row.facturacion || 0),
+    }));
+
     let facturacionNeta = 0;
     let facturacionEquipo = 0;
     let groups: CommissionGroup[] = [];
@@ -135,11 +163,26 @@ export class KpiService {
       }
       const split = splitProductRevenue(row.facturacion, matchingGroup, 0, 0);
       facturacionNeta += split.net;
+      // facturacionEquipo NO se suma desde productRows: el equipo comercial
+      // solo corresponde a split.team de las ventas con closer asignado.
+    }
+
+    // Equipo comercial = split.team de comerciales (ventas con closer asignado)
+    facturacionEquipo = 0;
+    for (const row of commercialProductRows) {
+      const matchingGroup = findGroupForProduct(groups, row, idToName);
+      if (!matchingGroup) {
+        facturacionEquipo += row.facturacion;
+        continue;
+      }
+      const split = splitProductRevenue(row.facturacion, matchingGroup, 0, 0);
       facturacionEquipo += split.team;
     }
 
     if (productRows.length === 0) {
       facturacionNeta = facturacionBruta;
+      facturacionEquipo = 0;
+    } else if (commercialProductRows.length === 0) {
       facturacionEquipo = 0;
     }
 
