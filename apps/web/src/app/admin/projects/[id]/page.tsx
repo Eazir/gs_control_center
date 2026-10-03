@@ -147,7 +147,7 @@ const DEFAULT_STAGES: PipelineStageConfig[] = [
   { id: 'uncontacted', name: 'Sin Contactar', color: '#6B7280' },
   { id: 'followup', name: 'En Seguimiento', color: '#3B82F6' },
   { id: 'won', name: 'Ganado', color: '#10B981' },
-  { id: 'discarded', name: 'Descartados', color: '#64748B' },
+  { id: 'recovery', name: 'Para Recuperación', color: '#F59E0B' },
   { id: 'lost', name: 'Perdidos', color: '#EF4444' },
 ];
 
