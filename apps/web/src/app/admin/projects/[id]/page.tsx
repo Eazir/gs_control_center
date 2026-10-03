@@ -147,7 +147,7 @@ const DEFAULT_STAGES: PipelineStageConfig[] = [
   { id: 'uncontacted', name: 'Sin Contactar', color: '#6B7280' },
   { id: 'followup', name: 'En Seguimiento', color: '#3B82F6' },
   { id: 'won', name: 'Ganado', color: '#10B981' },
-  { id: 'discarded', name: 'Descartados', color: '#64748B' },
+  { id: 'recovery', name: 'Para Recuperación', color: '#F59E0B' },
   { id: 'lost', name: 'Perdidos', color: '#EF4444' },
 ];
 
@@ -1333,7 +1333,7 @@ export default function ProjectDetailsPage() {
 
   // Copiar URL de webhook e id
   const copyWebhookUrl = () => {
-    const baseHost = tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com';
+    const baseHost = tunnelUrl.trim().replace(/\/$/, '') || 'https://hooks.growth-sell.xyz';
     const url = `${baseHost}/integrations/hotmart/webhook/${projectId}`;
     navigator.clipboard.writeText(url);
     setCopiedWebhookUrl(true);
@@ -1365,7 +1365,7 @@ export default function ProjectDetailsPage() {
         : null;
       return {
         ...lead,
-        closerName: resolvedName || lead.closerName || 'Sin closer',
+        closerName: resolvedName || lead.closerName || 'Por Asignar',
         closerId: closerId || undefined,
       };
     });
@@ -1460,7 +1460,7 @@ export default function ProjectDetailsPage() {
       const matchSearch = checkLeadMatch(l, q);
       // Un CLOSER jamás filtra por closer: el backend ya le devuelve solo sus leads y el
       // selector no está montado en su UI, así que un estado residual no debe ocultar nada.
-      const matchCloser = isCloser ? true : closerFilter === 'ALL' || l.closerName === closerFilter;
+      const matchCloser = isCloser ? true : closerFilter === 'ALL' || (closerFilter === 'none' ? !l.closerId : (l.closerId ? l.closerId === closerFilter : l.closerName === closerFilter));
       const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
 
       return matchSearch && matchCloser && matchStage;
@@ -1484,7 +1484,7 @@ export default function ProjectDetailsPage() {
         : null;
       return {
         ...lead,
-        closerName: resolvedName || lead.closerName || 'Sin closer',
+        closerName: resolvedName || lead.closerName || 'Por Asignar',
         closerId: closerId || undefined,
       };
     });
@@ -1494,7 +1494,7 @@ export default function ProjectDetailsPage() {
     const q = leadSearch.trim();
     return enrichedBaseLeads.filter((l) => {
       const matchSearch = checkLeadMatch(l, q);
-      const matchCloser = isCloser ? true : closerFilter === 'ALL' || l.closerName === closerFilter;
+      const matchCloser = isCloser ? true : closerFilter === 'ALL' || (closerFilter === 'none' ? !l.closerId : (l.closerId ? l.closerId === closerFilter : l.closerName === closerFilter));
       const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
 
       return matchSearch && matchCloser && matchStage;
@@ -1804,9 +1804,9 @@ export default function ProjectDetailsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="ALL">Todos los Closers</SelectItem>
-                        <SelectItem value="Por Asignar">Sin Asignar</SelectItem>
+                        <SelectItem value="none">Sin Asignar</SelectItem>
                         {closersInProject.map((c) => (
-                          <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
+                          <SelectItem key={c.id} value={c.userId}>
                             {c.userName || c.userEmail}
                           </SelectItem>
                         ))}
@@ -2662,7 +2662,7 @@ export default function ProjectDetailsPage() {
                     <div className="flex items-center gap-2">
                       <Input
                         readOnly
-                        value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com')}/integrations/hotmart/webhook/${projectId}`}
+                        value={`${(tunnelUrl.trim().replace(/\/$/, '') || 'https://hooks.growth-sell.xyz')}/integrations/hotmart/webhook/${projectId}`}
                         className="bg-[#0B0D13] font-mono text-[11px] h-8 text-muted-foreground select-all"
                       />
                       <Button
@@ -3741,7 +3741,7 @@ export default function ProjectDetailsPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const url = `${(tunnelUrl.trim().replace(/\/$/, '') || 'https://api.growthsell.com')}/integrations/hotmart/webhook/${projectId}`;
+                      const url = `${(tunnelUrl.trim().replace(/\/$/, '') || 'https://hooks.growth-sell.xyz')}/integrations/hotmart/webhook/${projectId}`;
                       navigator.clipboard.writeText(url);
                       setCopiedHotmartUrl(true);
                       setTimeout(() => setCopiedHotmartUrl(false), 2000);

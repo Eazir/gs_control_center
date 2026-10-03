@@ -8,6 +8,8 @@ import { ListProjectProductsUseCase } from '../projects';
 import { IntegrationsService } from '../integrations';
 import { EventStatus, Prisma, LeadSituacion } from '@prisma/client';
 import { withRls } from '../../core/database';
+import { normalizeSaleStatus } from '../../core/sales/normalize-sale-status';
+import { normalizeSck, isFixedCommercialSck, isCommercialAffiliate } from '../../core/sales/affiliation';
 
 import { CommissionService } from './commission.service';
 
@@ -187,9 +189,9 @@ export class SalesService implements OnModuleInit {
         });
 
         if (prevSale) {
-          const isAbandonedCart = prevSale.status === 'PURCHASE_OUT_OF_SHOPPING_CART' && rawSale.status !== 'PURCHASE_OUT_OF_SHOPPING_CART';
-          const isCanceled = prevSale.status === 'CANCELED' || prevSale.status === 'CANCELLED';
-          const isPendingToCanceled = ['BILLET', 'WAITING_PAYMENT', 'PENDING'].includes(prevSale.status) && ['CANCELED', 'CANCELLED'].includes(rawSale.status);
+          const isAbandonedCart = normalizeSaleStatus(prevSale.status) === 'ABANDONED_CART' && normalizeSaleStatus(rawSale.status) !== 'ABANDONED_CART';
+          const isCanceled = normalizeSaleStatus(prevSale.status) === 'CANCELED';
+          const isPendingToCanceled = ['WAITING_PAYMENT', 'PENDING', 'DELAYED'].includes(normalizeSaleStatus(prevSale.status)) && normalizeSaleStatus(rawSale.status) === 'CANCELED';
 
           if (isAbandonedCart || isCanceled || isPendingToCanceled) {
             existingSale = prevSale;
@@ -302,36 +304,29 @@ export class SalesService implements OnModuleInit {
       // Única vía: El SCK del webhook coincide con el SCK de algún miembro del proyecto.
       let closerId: string | null = null;
 
-      if (rawSale.sck && !matchedProduct?.isMarketing) {
+      const incomingSck = normalizeSck(rawSale.sck);
+      if (incomingSck && !matchedProduct?.isMarketing) {
         try {
-          const sck = rawSale.sck.trim();
-          const closerUser = await this.prisma.projectUser.findFirst({
-            where: {
-              projectId: event.projectId,
-              sckCodes: {
-                has: sck,
-              },
-            },
+          const members = await this.prisma.projectUser.findMany({
+            where: { projectId: event.projectId, sckCodes: { isEmpty: false } },
+            select: { userId: true, sckCodes: true },
           });
-          if (closerUser) { closerId = closerUser.userId; }
+          const hit = members.find(m => (m.sckCodes ?? []).some(c => normalizeSck(c) === incomingSck));
+          if (hit) { closerId = hit.userId; }
         } catch {
           // Ignorar si el SCK no resuelve a ningún usuario conocido o si falla la query
         }
       }
 
-      let attribution = closerId ? 'COMERCIAL' : 'MARKETING';
+      // Reafianza: si no resolvió closer pero el SCK es comercial fijo, o el afiliado es comercial,
+      // la venta es de equipo comercial aunque no coincida un SCK de closer específico.
+      const commercialCode = isFixedCommercialSck(rawSale.sck) || isCommercialAffiliate(rawSale.affiliates);
+      let attribution: 'COMERCIAL' | 'MARKETING' = closerId ? 'COMERCIAL' : (commercialCode ? 'COMERCIAL' : 'MARKETING');
 
-      // Validación de afiliados si no hay closer asignado
-      if (!closerId) {
-        const affiliates = rawSale.affiliates || [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const hasReynald = affiliates.some((a: any) => 
-          a?.affiliate_code === 'B100311196F' && a?.name && a.name.includes('Reynald')
-        );
-        if (hasReynald) {
-          attribution = 'COMERCIAL'; // Ventas equipo comercial sin closer, suman facturación pero sin comisión
-        }
-      }
+      // Determinar el closer efectivo de la venta: el encontrado por SCK, o el del lead cuando la
+      // venta es de equipo comercial pero no trae un SCK de closer específico.
+      // Regla: si la venta no coincide ni con el SCK del lead ni con comercial ni afiliado,
+      // NO se le asigna el lead.closerId: es MARKETING y sale.closerId queda null.
 
       // 5. Valores comerciales tomados estrictamente del producto oficial del proyecto o de la BD histórica
       const officialProductName = matchedProduct!.name!;
@@ -413,7 +408,7 @@ export class SalesService implements OnModuleInit {
           
           updateData.pipelineStage = pipelineStage;
           if (situacion) updateData.situacion = situacion;
-          if (closerId && !lead.closerId) updateData.closerId = closerId;
+          if (closerId && lead.closerId !== closerId) updateData.closerId = closerId;
 
           lead = await tx.lead.update({
             where: { id: lead.id },
@@ -430,8 +425,7 @@ export class SalesService implements OnModuleInit {
               phone: rawSale.leadPhone ?? null,
               pipelineStage,
               situacion: situacion ?? null,
-              closerId: closerId ?? null,
-            },
+              },
             include: { sales: true }
           });
         }
@@ -456,7 +450,7 @@ export class SalesService implements OnModuleInit {
             if (currentHistory.length === 0) {
               newHistory = [this.buildHistoryEvent('STATUS_CHANGE', { status: existingSale.status, timestamp: existingSale.createdAt, authorName: 'Hotmart' })];
             }
-            newHistory = [...newHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, authorName: 'Hotmart' })];
+            newHistory = [...newHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(rawSale.status), authorName: 'Hotmart' })];
           }
 
           const newMetadata = {
@@ -471,7 +465,7 @@ export class SalesService implements OnModuleInit {
             data: {
               externalOrderId: rawSale.externalOrderId,
               externalTxnId: rawSale.externalTxnId,
-              status: rawSale.status,
+              status: normalizeSaleStatus(rawSale.status),
               amount: newAmount,
               currency: officialCurrency,
               installments: officialInstallments,
@@ -493,7 +487,7 @@ export class SalesService implements OnModuleInit {
           // Adoptar Venta Manual
           const currentMetadata = (manualSaleToAdopt.metadata as Record<string, unknown>) || {};
           const currentHistory = Array.isArray(currentMetadata.history) ? currentMetadata.history : [];
-          const newHistory = [...currentHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt, authorName: 'Hotmart' })];
+          const newHistory = [...currentHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(rawSale.status), timestamp: saleCreatedAt, authorName: 'Hotmart' })];
           
           const newMetadata = {
             ...currentMetadata,
@@ -509,7 +503,7 @@ export class SalesService implements OnModuleInit {
               source: rawSale.source, // Cambia de MANUAL a HOTMART
               externalOrderId: rawSale.externalOrderId,
               externalTxnId: rawSale.externalTxnId,
-              status: rawSale.status,
+              status: normalizeSaleStatus(rawSale.status),
               amount: officialAmount,
               currency: officialCurrency,
               paymentMethod: rawSale.paymentMethod ?? null,
@@ -527,7 +521,7 @@ export class SalesService implements OnModuleInit {
           const initialMetadata = {
             ...(rawSale.metadata ? (rawSale.metadata as object) : {}),
             attribution,
-            history: [this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt, authorName: 'Hotmart' })],
+            history: [this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(rawSale.status), timestamp: saleCreatedAt, authorName: 'Hotmart' })],
           };
 
           await tx.sale.create({
@@ -539,14 +533,14 @@ export class SalesService implements OnModuleInit {
               externalTxnId: rawSale.externalTxnId,
               productName: officialProductName,
               productId: rawSale.productId ?? matchedProduct?.id ?? null,
-              status: rawSale.status,
+              status: normalizeSaleStatus(rawSale.status),
               amount: officialAmount,
               currency: officialCurrency,
               paymentMethod: rawSale.paymentMethod ?? null,
               installments: officialInstallments,
               offerCode: rawSale.offerCode ?? matchedProduct?.offerCode ?? null,
               sck: rawSale.sck ?? null,
-              closerId: lead.closerId ?? null,
+              closerId: closerId ?? (attribution === 'COMERCIAL' ? lead.closerId : null) ?? null,
               pipelineStage: pipelineStage,
               metadata: initialMetadata as Prisma.InputJsonValue,
               createdAt: saleCreatedAt,
@@ -643,7 +637,7 @@ export class SalesService implements OnModuleInit {
 
       const whereClause: import('@prisma/client').Prisma.SaleWhereInput = { 
         projectId,
-        status: { in: ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'] } 
+        status: { in: ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'], mode: 'insensitive' as const } 
       };
       
       const project = await this.prisma.project.findUnique({
@@ -882,7 +876,7 @@ export class SalesService implements OnModuleInit {
       }
 
       const initialMetadata = {
-        history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: dto.date ? new Date(dto.date) : new Date() })],
+        history: [this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(dto.status), timestamp: dto.date ? new Date(dto.date) : new Date() })],
       };
 
       const sale = await tx.sale.create({
@@ -894,7 +888,7 @@ export class SalesService implements OnModuleInit {
           externalTxnId: externalTxnId,
           productName: dto.productName,
           productId: dto.productId ?? null,
-          status: dto.status,
+          status: normalizeSaleStatus(dto.status),
           amount: dto.amount,
           currency: dto.currency,
           closerId: safeCloserId ?? null,
@@ -1289,7 +1283,7 @@ export class SalesService implements OnModuleInit {
 
     const updateData: import('@prisma/client').Prisma.SaleUpdateInput = {};
     if (data.status !== undefined) {
-      updateData.status = data.status;
+      updateData.status = normalizeSaleStatus(data.status);
       
       // Deducir automáticamente la etapa y situación con base en el nuevo estado
       const situacion = this.determineSituacion(data.status);
@@ -1441,7 +1435,6 @@ export class SalesService implements OnModuleInit {
             email: dto.email ?? null,
             name: dto.name ?? null,
             phone: dto.phone ?? null,
-            closerId: closerId ?? null,
             situacion: dto.situacion ?? null,
             pipelineStage: derivedStage,
           }
@@ -1574,8 +1567,22 @@ export class SalesService implements OnModuleInit {
       if (lead && lead.sales.length > 0) {
         matchingSale = lead.sales.find(s => s.externalTxnId === dto.externalTxnId);
         if (!matchingSale) {
-          // Si tiene ventas pero NINGUNA es esta transacción, creamos un lead nuevo (1 lead x transaccion distinta)
-          lead = null;
+          // Si el estado es cancelado / pendiente / carrito abandonado, o el lead
+          // coincide con la transacción anterior, adoptarla en vez de crear un lead nuevo:
+          // se actualiza su código HP y se acumula la trazabilidad.
+          const recoverable = ['CANCELED', 'WAITING_PAYMENT', 'PENDING', 'DELAYED', 'ABANDONED_CART'];
+          const incomingStatus = normalizeSaleStatus(dto.status);
+          const prev = lead.sales
+            .map(s => ({ ...s, normStatus: normalizeSaleStatus(s.status) }))
+            .filter(s => recoverable.includes(s.normStatus));
+          const candidate = prev.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+          if (candidate && (recoverable.includes(incomingStatus) || candidate.normStatus === 'ABANDONED_CART')) {
+            matchingSale = candidate;
+            this.logger.log(`[CSV-ADOPT] Adoptando venta previa ${candidate.id} para el lead ${lead.id} (estado previo ${candidate.normStatus}).`);
+          } else {
+            // Si tiene ventas pero NINGUNA es esta transacción, creamos un lead nuevo (1 lead x transaccion distinta)
+            lead = null;
+          }
         }
       }
 
@@ -1587,7 +1594,7 @@ export class SalesService implements OnModuleInit {
         // Solo actualizar el pipeline stage del lead si la nueva transacción es un avance
         updateData.pipelineStage = pipelineStage;
         if (situacion) updateData.situacion = situacion;
-        if (closerId && !lead.closerId) updateData.closerId = closerId;
+        if (closerId && lead.closerId !== closerId) updateData.closerId = closerId;
         
         lead = await tx.lead.update({ where: { id: lead.id }, data: updateData, include: { sales: true } });
       } else {
@@ -1632,15 +1639,17 @@ export class SalesService implements OnModuleInit {
       if (matchingSale) {
         // Actualizar transacción existente
         const updatedHistory = ((matchingSale.metadata as Record<string, unknown>)?.history as Prisma.InputJsonObject[]) || [];
-        updatedHistory.push(this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: saleDate }) as Prisma.InputJsonObject);
+        updatedHistory.push(this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(dto.status), timestamp: saleDate }) as Prisma.InputJsonObject);
         
         const sale = await tx.sale.update({
           where: { id: matchingSale.id },
           data: {
-            status: dto.status,
+            status: normalizeSaleStatus(dto.status),
             amount: dto.amount && dto.amount > 0 ? dto.amount : matchingSale.amount,
             productName: finalProductName,
-            closerId: closerId ?? matchingSale.closerId,
+            closerId: closerId ?? matchingSale.closerId ?? lead.closerId,
+            externalOrderId: orderId,
+            externalTxnId: dto.externalTxnId,
             pipelineStage,
             metadata: {
               ...((matchingSale.metadata as object) || {}),
@@ -1659,18 +1668,18 @@ export class SalesService implements OnModuleInit {
             externalOrderId: orderId, 
             externalTxnId: dto.externalTxnId,
             productName: finalProductName,
-            status: dto.status,
+            status: normalizeSaleStatus(dto.status),
+            closerId: closerId ?? ((dto.sck && isFixedCommercialSck(dto.sck)) || (dto.affiliateName && normalizeSck(dto.affiliateName).match(/reynald|diego|dh/)) ? lead.closerId : null) ?? null,
             amount: finalAmount,
             currency: finalCurrency,
             createdAt: saleDate,
-            closerId: closerId ?? null,
             offerCode: dto.offerCode ?? null,
             sck: dto.sck ?? null,
             paymentMethod: dto.paymentMethod ?? null,
             installments: finalInstallments,
             pipelineStage,
             metadata: { 
-              history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: saleDate })],
+              history: [this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(dto.status), timestamp: saleDate })],
               isFirstInstallment: dto.isFirstInstallment
             }
           }
