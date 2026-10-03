@@ -8,6 +8,7 @@ import { ListProjectProductsUseCase } from '../projects';
 import { IntegrationsService } from '../integrations';
 import { EventStatus, Prisma, LeadSituacion } from '@prisma/client';
 import { withRls } from '../../core/database';
+import { normalizeSaleStatus } from '../../core/sales/normalize-sale-status';
 
 import { CommissionService } from './commission.service';
 
@@ -456,7 +457,7 @@ export class SalesService implements OnModuleInit {
             if (currentHistory.length === 0) {
               newHistory = [this.buildHistoryEvent('STATUS_CHANGE', { status: existingSale.status, timestamp: existingSale.createdAt, authorName: 'Hotmart' })];
             }
-            newHistory = [...newHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, authorName: 'Hotmart' })];
+            newHistory = [...newHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(rawSale.status), authorName: 'Hotmart' })];
           }
 
           const newMetadata = {
@@ -471,7 +472,7 @@ export class SalesService implements OnModuleInit {
             data: {
               externalOrderId: rawSale.externalOrderId,
               externalTxnId: rawSale.externalTxnId,
-              status: rawSale.status,
+              status: normalizeSaleStatus(rawSale.status),
               amount: newAmount,
               currency: officialCurrency,
               installments: officialInstallments,
@@ -493,7 +494,7 @@ export class SalesService implements OnModuleInit {
           // Adoptar Venta Manual
           const currentMetadata = (manualSaleToAdopt.metadata as Record<string, unknown>) || {};
           const currentHistory = Array.isArray(currentMetadata.history) ? currentMetadata.history : [];
-          const newHistory = [...currentHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt, authorName: 'Hotmart' })];
+          const newHistory = [...currentHistory, this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(rawSale.status), timestamp: saleCreatedAt, authorName: 'Hotmart' })];
           
           const newMetadata = {
             ...currentMetadata,
@@ -509,7 +510,7 @@ export class SalesService implements OnModuleInit {
               source: rawSale.source, // Cambia de MANUAL a HOTMART
               externalOrderId: rawSale.externalOrderId,
               externalTxnId: rawSale.externalTxnId,
-              status: rawSale.status,
+              status: normalizeSaleStatus(rawSale.status),
               amount: officialAmount,
               currency: officialCurrency,
               paymentMethod: rawSale.paymentMethod ?? null,
@@ -527,7 +528,7 @@ export class SalesService implements OnModuleInit {
           const initialMetadata = {
             ...(rawSale.metadata ? (rawSale.metadata as object) : {}),
             attribution,
-            history: [this.buildHistoryEvent('STATUS_CHANGE', { status: rawSale.status, timestamp: saleCreatedAt, authorName: 'Hotmart' })],
+            history: [this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(rawSale.status), timestamp: saleCreatedAt, authorName: 'Hotmart' })],
           };
 
           await tx.sale.create({
@@ -539,7 +540,7 @@ export class SalesService implements OnModuleInit {
               externalTxnId: rawSale.externalTxnId,
               productName: officialProductName,
               productId: rawSale.productId ?? matchedProduct?.id ?? null,
-              status: rawSale.status,
+              status: normalizeSaleStatus(rawSale.status),
               amount: officialAmount,
               currency: officialCurrency,
               paymentMethod: rawSale.paymentMethod ?? null,
@@ -643,7 +644,7 @@ export class SalesService implements OnModuleInit {
 
       const whereClause: import('@prisma/client').Prisma.SaleWhereInput = { 
         projectId,
-        status: { in: ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'] } 
+        status: { in: ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'], mode: 'insensitive' as const } 
       };
       
       const project = await this.prisma.project.findUnique({
@@ -882,7 +883,7 @@ export class SalesService implements OnModuleInit {
       }
 
       const initialMetadata = {
-        history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: dto.date ? new Date(dto.date) : new Date() })],
+        history: [this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(dto.status), timestamp: dto.date ? new Date(dto.date) : new Date() })],
       };
 
       const sale = await tx.sale.create({
@@ -894,7 +895,7 @@ export class SalesService implements OnModuleInit {
           externalTxnId: externalTxnId,
           productName: dto.productName,
           productId: dto.productId ?? null,
-          status: dto.status,
+          status: normalizeSaleStatus(dto.status),
           amount: dto.amount,
           currency: dto.currency,
           closerId: safeCloserId ?? null,
@@ -1289,7 +1290,7 @@ export class SalesService implements OnModuleInit {
 
     const updateData: import('@prisma/client').Prisma.SaleUpdateInput = {};
     if (data.status !== undefined) {
-      updateData.status = data.status;
+      updateData.status = normalizeSaleStatus(data.status);
       
       // Deducir automáticamente la etapa y situación con base en el nuevo estado
       const situacion = this.determineSituacion(data.status);
@@ -1632,12 +1633,12 @@ export class SalesService implements OnModuleInit {
       if (matchingSale) {
         // Actualizar transacción existente
         const updatedHistory = ((matchingSale.metadata as Record<string, unknown>)?.history as Prisma.InputJsonObject[]) || [];
-        updatedHistory.push(this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: saleDate }) as Prisma.InputJsonObject);
+        updatedHistory.push(this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(dto.status), timestamp: saleDate }) as Prisma.InputJsonObject);
         
         const sale = await tx.sale.update({
           where: { id: matchingSale.id },
           data: {
-            status: dto.status,
+            status: normalizeSaleStatus(dto.status),
             amount: dto.amount && dto.amount > 0 ? dto.amount : matchingSale.amount,
             productName: finalProductName,
             closerId: closerId ?? matchingSale.closerId,
@@ -1659,7 +1660,7 @@ export class SalesService implements OnModuleInit {
             externalOrderId: orderId, 
             externalTxnId: dto.externalTxnId,
             productName: finalProductName,
-            status: dto.status,
+            status: normalizeSaleStatus(dto.status),
             amount: finalAmount,
             currency: finalCurrency,
             createdAt: saleDate,
@@ -1670,7 +1671,7 @@ export class SalesService implements OnModuleInit {
             installments: finalInstallments,
             pipelineStage,
             metadata: { 
-              history: [this.buildHistoryEvent('STATUS_CHANGE', { status: dto.status, timestamp: saleDate })],
+              history: [this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(dto.status), timestamp: saleDate })],
               isFirstInstallment: dto.isFirstInstallment
             }
           }
