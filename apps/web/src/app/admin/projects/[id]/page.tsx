@@ -1365,7 +1365,7 @@ export default function ProjectDetailsPage() {
         : null;
       return {
         ...lead,
-        closerName: resolvedName || lead.closerName || 'Sin closer',
+        closerName: resolvedName || lead.closerName || 'Por Asignar',
         closerId: closerId || undefined,
       };
     });
@@ -1460,7 +1460,7 @@ export default function ProjectDetailsPage() {
       const matchSearch = checkLeadMatch(l, q);
       // Un CLOSER jamás filtra por closer: el backend ya le devuelve solo sus leads y el
       // selector no está montado en su UI, así que un estado residual no debe ocultar nada.
-      const matchCloser = isCloser ? true : closerFilter === 'ALL' || l.closerName === closerFilter;
+      const matchCloser = isCloser ? true : closerFilter === 'ALL' || (closerFilter === 'none' ? !l.closerId : (l.closerId ? l.closerId === closerFilter : l.closerName === closerFilter));
       const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
 
       return matchSearch && matchCloser && matchStage;
@@ -1484,7 +1484,7 @@ export default function ProjectDetailsPage() {
         : null;
       return {
         ...lead,
-        closerName: resolvedName || lead.closerName || 'Sin closer',
+        closerName: resolvedName || lead.closerName || 'Por Asignar',
         closerId: closerId || undefined,
       };
     });
@@ -1494,7 +1494,7 @@ export default function ProjectDetailsPage() {
     const q = leadSearch.trim();
     return enrichedBaseLeads.filter((l) => {
       const matchSearch = checkLeadMatch(l, q);
-      const matchCloser = isCloser ? true : closerFilter === 'ALL' || l.closerName === closerFilter;
+      const matchCloser = isCloser ? true : closerFilter === 'ALL' || (closerFilter === 'none' ? !l.closerId : (l.closerId ? l.closerId === closerFilter : l.closerName === closerFilter));
       const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
 
       return matchSearch && matchCloser && matchStage;
@@ -1804,9 +1804,9 @@ export default function ProjectDetailsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="ALL">Todos los Closers</SelectItem>
-                        <SelectItem value="Por Asignar">Sin Asignar</SelectItem>
+                        <SelectItem value="none">Sin Asignar</SelectItem>
                         {closersInProject.map((c) => (
-                          <SelectItem key={c.id} value={c.userName || c.userEmail || c.userId}>
+                          <SelectItem key={c.id} value={c.userId}>
                             {c.userName || c.userEmail}
                           </SelectItem>
                         ))}
