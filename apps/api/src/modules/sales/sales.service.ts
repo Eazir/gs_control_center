@@ -9,6 +9,7 @@ import { IntegrationsService } from '../integrations';
 import { EventStatus, Prisma, LeadSituacion } from '@prisma/client';
 import { withRls } from '../../core/database';
 import { normalizeSaleStatus } from '../../core/sales/normalize-sale-status';
+import { normalizeSck, isFixedCommercialSck, isCommercialAffiliate } from '../../core/sales/affiliation';
 
 import { CommissionService } from './commission.service';
 
@@ -303,36 +304,29 @@ export class SalesService implements OnModuleInit {
       // Única vía: El SCK del webhook coincide con el SCK de algún miembro del proyecto.
       let closerId: string | null = null;
 
-      if (rawSale.sck && !matchedProduct?.isMarketing) {
+      const incomingSck = normalizeSck(rawSale.sck);
+      if (incomingSck && !matchedProduct?.isMarketing) {
         try {
-          const sck = rawSale.sck.trim();
-          const closerUser = await this.prisma.projectUser.findFirst({
-            where: {
-              projectId: event.projectId,
-              sckCodes: {
-                has: sck,
-              },
-            },
+          const members = await this.prisma.projectUser.findMany({
+            where: { projectId: event.projectId, sckCodes: { isEmpty: false } },
+            select: { userId: true, sckCodes: true },
           });
-          if (closerUser) { closerId = closerUser.userId; }
+          const hit = members.find(m => (m.sckCodes ?? []).some(c => normalizeSck(c) === incomingSck));
+          if (hit) { closerId = hit.userId; }
         } catch {
           // Ignorar si el SCK no resuelve a ningún usuario conocido o si falla la query
         }
       }
 
-      let attribution = closerId ? 'COMERCIAL' : 'MARKETING';
+      // Reafianza: si no resolvió closer pero el SCK es comercial fijo, o el afiliado es comercial,
+      // la venta es de equipo comercial aunque no coincida un SCK de closer específico.
+      const commercialCode = isFixedCommercialSck(rawSale.sck) || isCommercialAffiliate(rawSale.affiliates);
+      let attribution: 'COMERCIAL' | 'MARKETING' = closerId ? 'COMERCIAL' : (commercialCode ? 'COMERCIAL' : 'MARKETING');
 
-      // Validación de afiliados si no hay closer asignado
-      if (!closerId) {
-        const affiliates = rawSale.affiliates || [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const hasReynald = affiliates.some((a: any) => 
-          a?.affiliate_code === 'B100311196F' && a?.name && a.name.includes('Reynald')
-        );
-        if (hasReynald) {
-          attribution = 'COMERCIAL'; // Ventas equipo comercial sin closer, suman facturación pero sin comisión
-        }
-      }
+      // Determinar el closer efectivo de la venta: el encontrado por SCK, o el del lead cuando la
+      // venta es de equipo comercial pero no trae un SCK de closer específico.
+      // Regla: si la venta no coincide ni con el SCK del lead ni con comercial ni afiliado,
+      // NO se le asigna el lead.closerId: es MARKETING y sale.closerId queda null.
 
       // 5. Valores comerciales tomados estrictamente del producto oficial del proyecto o de la BD histórica
       const officialProductName = matchedProduct!.name!;
@@ -414,7 +408,7 @@ export class SalesService implements OnModuleInit {
           
           updateData.pipelineStage = pipelineStage;
           if (situacion) updateData.situacion = situacion;
-          if (closerId && !lead.closerId) updateData.closerId = closerId;
+          if (closerId && lead.closerId !== closerId) updateData.closerId = closerId;
 
           lead = await tx.lead.update({
             where: { id: lead.id },
@@ -546,7 +540,7 @@ export class SalesService implements OnModuleInit {
               installments: officialInstallments,
               offerCode: rawSale.offerCode ?? matchedProduct?.offerCode ?? null,
               sck: rawSale.sck ?? null,
-              closerId: lead.closerId ?? null,
+              closerId: closerId ?? (attribution === 'COMERCIAL' ? lead.closerId : null) ?? null,
               pipelineStage: pipelineStage,
               metadata: initialMetadata as Prisma.InputJsonValue,
               createdAt: saleCreatedAt,
@@ -1600,7 +1594,7 @@ export class SalesService implements OnModuleInit {
         // Solo actualizar el pipeline stage del lead si la nueva transacción es un avance
         updateData.pipelineStage = pipelineStage;
         if (situacion) updateData.situacion = situacion;
-        if (closerId && !lead.closerId) updateData.closerId = closerId;
+        if (closerId && lead.closerId !== closerId) updateData.closerId = closerId;
         
         lead = await tx.lead.update({ where: { id: lead.id }, data: updateData, include: { sales: true } });
       } else {
@@ -1675,7 +1669,7 @@ export class SalesService implements OnModuleInit {
             externalTxnId: dto.externalTxnId,
             productName: finalProductName,
             status: normalizeSaleStatus(dto.status),
-            closerId: closerId ?? lead.closerId ?? null,
+            closerId: closerId ?? ((dto.sck && isFixedCommercialSck(dto.sck)) || (dto.affiliateName && normalizeSck(dto.affiliateName).match(/reynald|diego|dh/)) ? lead.closerId : null) ?? null,
             amount: finalAmount,
             currency: finalCurrency,
             createdAt: saleDate,
