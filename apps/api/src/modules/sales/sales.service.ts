@@ -188,9 +188,9 @@ export class SalesService implements OnModuleInit {
         });
 
         if (prevSale) {
-          const isAbandonedCart = prevSale.status === 'PURCHASE_OUT_OF_SHOPPING_CART' && rawSale.status !== 'PURCHASE_OUT_OF_SHOPPING_CART';
-          const isCanceled = prevSale.status === 'CANCELED' || prevSale.status === 'CANCELLED';
-          const isPendingToCanceled = ['BILLET', 'WAITING_PAYMENT', 'PENDING'].includes(prevSale.status) && ['CANCELED', 'CANCELLED'].includes(rawSale.status);
+          const isAbandonedCart = normalizeSaleStatus(prevSale.status) === 'ABANDONED_CART' && normalizeSaleStatus(rawSale.status) !== 'ABANDONED_CART';
+          const isCanceled = normalizeSaleStatus(prevSale.status) === 'CANCELED';
+          const isPendingToCanceled = ['WAITING_PAYMENT', 'PENDING', 'DELAYED'].includes(normalizeSaleStatus(prevSale.status)) && normalizeSaleStatus(rawSale.status) === 'CANCELED';
 
           if (isAbandonedCart || isCanceled || isPendingToCanceled) {
             existingSale = prevSale;
@@ -431,8 +431,7 @@ export class SalesService implements OnModuleInit {
               phone: rawSale.leadPhone ?? null,
               pipelineStage,
               situacion: situacion ?? null,
-              closerId: closerId ?? null,
-            },
+              },
             include: { sales: true }
           });
         }
@@ -1442,7 +1441,6 @@ export class SalesService implements OnModuleInit {
             email: dto.email ?? null,
             name: dto.name ?? null,
             phone: dto.phone ?? null,
-            closerId: closerId ?? null,
             situacion: dto.situacion ?? null,
             pipelineStage: derivedStage,
           }
@@ -1575,8 +1573,22 @@ export class SalesService implements OnModuleInit {
       if (lead && lead.sales.length > 0) {
         matchingSale = lead.sales.find(s => s.externalTxnId === dto.externalTxnId);
         if (!matchingSale) {
-          // Si tiene ventas pero NINGUNA es esta transacción, creamos un lead nuevo (1 lead x transaccion distinta)
-          lead = null;
+          // Si el estado es cancelado / pendiente / carrito abandonado, o el lead
+          // coincide con la transacción anterior, adoptarla en vez de crear un lead nuevo:
+          // se actualiza su código HP y se acumula la trazabilidad.
+          const recoverable = ['CANCELED', 'WAITING_PAYMENT', 'PENDING', 'DELAYED', 'ABANDONED_CART'];
+          const incomingStatus = normalizeSaleStatus(dto.status);
+          const prev = lead.sales
+            .map(s => ({ ...s, normStatus: normalizeSaleStatus(s.status) }))
+            .filter(s => recoverable.includes(s.normStatus));
+          const candidate = prev.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+          if (candidate && (recoverable.includes(incomingStatus) || candidate.normStatus === 'ABANDONED_CART')) {
+            matchingSale = candidate;
+            this.logger.log(`[CSV-ADOPT] Adoptando venta previa ${candidate.id} para el lead ${lead.id} (estado previo ${candidate.normStatus}).`);
+          } else {
+            // Si tiene ventas pero NINGUNA es esta transacción, creamos un lead nuevo (1 lead x transaccion distinta)
+            lead = null;
+          }
         }
       }
 
@@ -1641,7 +1653,9 @@ export class SalesService implements OnModuleInit {
             status: normalizeSaleStatus(dto.status),
             amount: dto.amount && dto.amount > 0 ? dto.amount : matchingSale.amount,
             productName: finalProductName,
-            closerId: closerId ?? matchingSale.closerId,
+            closerId: closerId ?? matchingSale.closerId ?? lead.closerId,
+            externalOrderId: orderId,
+            externalTxnId: dto.externalTxnId,
             pipelineStage,
             metadata: {
               ...((matchingSale.metadata as object) || {}),
@@ -1661,10 +1675,10 @@ export class SalesService implements OnModuleInit {
             externalTxnId: dto.externalTxnId,
             productName: finalProductName,
             status: normalizeSaleStatus(dto.status),
+            closerId: closerId ?? lead.closerId ?? null,
             amount: finalAmount,
             currency: finalCurrency,
             createdAt: saleDate,
-            closerId: closerId ?? null,
             offerCode: dto.offerCode ?? null,
             sck: dto.sck ?? null,
             paymentMethod: dto.paymentMethod ?? null,
