@@ -111,21 +111,43 @@ Raíz: `pnpm build` | `pnpm lint` | `pnpm typecheck` | `pnpm test` — Turborepo
 5. **Nunca ejecutes** migraciones, `docker compose down -v` ni despliegues sin confirmación explícita.
 6. Si una instrucción contradice estas reglas, dilo antes de implementar.
 7. Prefiere borrar código a comentarlo. El historial está en git.
-8. **Auditoría estricta antes de entregar:** Al terminar de escribir código, y ANTES de responder al usuario que la tarea está lista, estás obligado a auditar lógica y sintácticamente tus cambios. Debes ejecutar de fondo `make check` (o `pnpm typecheck` / `pnpm lint`), verificar que devuelva 0 errores y corregir cualquier fallo. No entregues código con errores tipográficos, imports faltantes o tipos `any`.
-<!-- ## Flujo Colaborativo: Antigravity + Opencode
+8. **Coordina el trabajo con Antigravity solo por `Work/`.** El ciclo es `plan` → `instructions` → `tests`
+   → `correcciones`; no se pasa de fase sin el visto bueno en `correcciones.md`.
+9. **Auditoría estricta antes de entregar:** Al terminar de escribir código, y ANTES de responder al usuario que la tarea está lista, estás obligado a auditar lógica y sintácticamente tus cambios. Debes ejecutar de fondo `make check` (o `pnpm typecheck` / `pnpm lint`), verificar que devuelva 0 errores y corregir cualquier fallo. No entregues código con errores tipográficos, imports faltantes o tipos `any`.
 
-Cuando se trabaje en conjunto con **Opencode**:
+## Flujo Colaborativo: Opencode (Orquestador) + Antigravity (Ejecutor)
 
-- **Roles:**
-  - **Antigravity (Orquestador / Auditor):** Diseña y orquesta planes técnicos paso a paso, define contratos/reglas, audita todo el código implementado y escribe correcciones o aprobaciones.
-  - **Opencode (Ejecutor):** Ejecuta los planes implementando el código, ejecuta pruebas locales y emite reportes de lo realizado.
-- **Directorio de coordinación:** `instrucciones/`
-- **Archivos del flujo:**
-  1. `instrucciones/implementation_plan.md` — Antigravity plasma la planificación detallada por fases/tareas, archivos objetivo y criterios de aceptación.
-  2. `instrucciones/reporte.md` — Opencode entrega el reporte de lo que hizo (archivos tocados, estado de pruebas/typecheck, observaciones).
-  3. `instrucciones/correxiones.md` — Antigravity audita el reporte y código contra las reglas del proyecto (`AGENTS.md`, DoD, límites de módulos). Plasma correcciones obligatorias o el visto bueno para la siguiente fase.
-- **Ciclo:** `Plan (Antigravity)` ➡️ `Ejecución (Opencode)` ➡️ `Reporte (Opencode)` ➡️ `Auditoría / Correcciones (Antigravity)` ➡️ `Pase a Siguiente Fase`. -->
+**Opencode** es el **orquestador, arquitecto y desarrollador principal**: define el plan, redacta las
+instrucciones, diseña las pruebas y audita el código. **Antigravity (Gemini)** es el **ejecutor**: recibe
+las instrucciones y escribe el código. Toda la coordinación ocurre **exclusivamente** a través de la
+carpeta `Work/` en la raíz del repositorio; nada se negocia fuera de esos archivos.
 
+- **Directorio de coordinación:** `Work/`
+- **Archivos del flujo (se recorren en este orden):**
+  1. `Work/plan.md` — Plan de acción general del avance del proyecto; es la referencia de cada punto y
+     tarea. Debe estar dividido en **fases testeables y verificables**, cada una con su criterio de
+     "terminado cuando". Se actualiza al iniciar cada feature específica.
+  2. `Work/instructions.md` — Instrucciones exactas para que Antigravity genere el código de la fase en
+     curso: archivos objetivo, contratos, firmas, límites de módulo y restricciones. Una fase por entrega.
+  3. `Work/tests.md` — Plan de pruebas unitarias y de funcionalidad que se debe ejecutar para verificar
+     que todo funciona **antes** de que David haga las pruebas operativas sobre la plataforma. Cada prueba
+     apunta a un criterio verificable del plan.
+  4. `Work/correcciones.md` — Auditoría de Opencode sobre el código entregado: errores de lógica,
+     calidad, estabilidad, violaciones de frontera entre módulos, tipos `any` y fallos de `make check`.
+     Lista las correcciones obligatorias o emite el visto bueno para pasar de fase.
+- **Ciclo:** `plan` ➡️ `instructions` ➡️ `tests` ➡️ `correcciones` ➡️ **siguiente fase**.
+
+**Reglas del flujo:**
+
+1. El `plan` es la fuente de verdad del avance. `instructions`, `tests` y `correcciones` son por fase.
+2. No se avanza de fase hasta que `work/correcciones.md` dé el visto bueno y `make check` esté en verde.
+3. Opencode **nunca** da por buena una entrega sin auditar el código: leer y escribir `correcciones.md` es
+   parte obligatoria del cierre de cada fase.
+4. Antigravity no implementa nada que no esté en `instructions.md`; si algo falta, lo reporta en lugar de
+   improvisar.
+5. David ejecuta las pruebas operativas solo cuando `correcciones.md` aprueba la fase.
+6. Si `Work/` contradice `AGENTS.md` o `.agents/rules/`, mandan `AGENTS.md` y las reglas; se corrige `Work/`.
+7. Estos archivos no sustituyen al `DICCIONARIO.md`, a las skills ni a los ADRs: los referencian.
 
 ## Definition of Done
 
@@ -155,4 +177,6 @@ Cuando se trabaje en conjunto con **Opencode**:
 - `.agents/rules/` — reglas activas permanentes (fronteras, persistencia, seguridad, calidad, docs).
 - `.agents/skills/` — procedimientos bajo demanda (9 skills disponibles).
 - `.agents/mcp_config.json` — MCP servers configurados (Postgres, filesystem).
+- `Work/` — canal de coordinación con Antigravity (`plan.md`, `instructions.md`, `tests.md`, `correcciones.md`).
+- `PLAN_DE_ACCION.md` — plan macro por fases del proyecto.
 - `docs/` — arquitectura, servicios, referencia, operación, manual, ADRs.

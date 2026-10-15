@@ -1,5 +1,11 @@
 # Se aplica solo en desarrollo (docker compose lo carga automáticamente).
 # Expone puertos a localhost y activa hot reload.
+#
+# Nota (Windows + pnpm): el host puede tener `node_modules` reales dentro de
+# apps/* y packages/*. Al montar esos directorios, los symlinks de pnpm en Linux
+# chocan con los directorios de Windows (ERR_PNPM_PACKAGE_MANAGER_SYMLINK_FAILED).
+# Por eso cada `node_modules` montado se sombrea con un volumen anónimo, igual
+# que ya se hace con /app/node_modules.
 services:
   postgres:
     ports: ["5433:5432"]
@@ -17,29 +23,45 @@ services:
 
   api:
     build: { target: dev }
-    command: ["pnpm", "--filter", "api", "dev"]
+    command: ["sh", "-c", "pnpm --filter api prisma generate && pnpm --filter api dev"]
     ports: ["3001:3001", "9229:9229"]
     volumes:
       - ./apps/api:/app/apps/api
       - ./packages:/app/packages
       - /app/node_modules
+      - /app/apps/api/node_modules
+      - /app/packages/contracts/node_modules
+      - /app/packages/config/node_modules
 
   ingest:
     build: { target: dev }
-    command: ["pnpm", "--filter", "api", "dev:ingest"]
+    command: ["sh", "-c", "pnpm --filter api prisma generate && pnpm --filter api dev:ingest"]
     ports: ["3002:3002"]
     volumes:
       - ./apps/api:/app/apps/api
       - ./packages:/app/packages
       - /app/node_modules
+      - /app/apps/api/node_modules
+      - /app/packages/contracts/node_modules
+      - /app/packages/config/node_modules
 
   worker:
     build: { target: dev }
-    command: ["pnpm", "--filter", "api", "dev:worker"]
+    command: ["sh", "-c", "pnpm --filter api prisma generate && pnpm --filter api dev:worker"]
+    healthcheck:
+      # En dev no hay dist/: el probe se ejecuta desde src vía tsx.
+      test: ["CMD", "pnpm", "--filter", "api", "exec", "tsx", "src/health/worker-probe.ts"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     volumes:
       - ./apps/api:/app/apps/api
       - ./packages:/app/packages
       - /app/node_modules
+      - /app/apps/api/node_modules
+      - /app/packages/contracts/node_modules
+      - /app/packages/config/node_modules
 
   web:
     build: { target: dev }
@@ -49,4 +71,7 @@ services:
       - ./apps/web:/app/apps/web
       - ./packages:/app/packages
       - /app/node_modules
+      - /app/apps/web/node_modules
+      - /app/packages/contracts/node_modules
+      - /app/packages/config/node_modules
       - /app/apps/web/.next
