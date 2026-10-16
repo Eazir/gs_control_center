@@ -33,6 +33,9 @@ wal/
 pgdata/
 redisdata/
 
+# Dumps y exportaciones de base de datos (contienen PII y credenciales)
+db_postgres/exports/
+
 # Sistema operativo e IDEs
 .DS_Store
 Thumbs.db
