@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, Query, UseGuards, Request, BadRequestException, Inject, ForbiddenException } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { JwtAuthGuard } from '../auth';
-import { JwtPayload, ManualSaleSchema, CsvSaleImportSchema, CsvLeadImportSchema, UpdateLeadDto, UpdateTransactionStatusDto } from '@gs/contracts';
+import { JwtPayload, ManualSaleSchema, CsvSaleImportSchema, CsvLeadImportSchema, UpdateLeadDto, UpdateTransactionStatusDto, ListFiltersSchema } from '@gs/contracts';
 
 @Controller('sales')
 @UseGuards(JwtAuthGuard)
@@ -14,36 +14,52 @@ export class SalesController {
   @Get('project/:projectId')
   async listProjectSales(
     @Param('projectId') projectId: string,
+    @Query() query: Record<string, string>,
     @Request() req: { user: JwtPayload }
   ) {
-    if (!this.salesService) {
-      return [];
+    const parsed = ListFiltersSchema.safeParse(query);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.errors);
     }
-    return this.salesService.listSales(projectId, { id: req.user.sub, role: req.user.role });
+    if (!this.salesService) {
+      return { items: [], total: 0, pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } };
+    }
+    return this.salesService.listSales(projectId, parsed.data, { id: req.user.sub, role: req.user.role });
   }
 
   @Get('project/:projectId/transactions')
   async listProjectTransactions(
     @Param('projectId') projectId: string,
+    @Query() query: Record<string, string>,
     @Request() req: { user: JwtPayload }
   ) {
     if (req.user.role === 'CLOSER') {
       throw new ForbiddenException('Los closers no tienen acceso al historial de transacciones global.');
     }
-    if (!this.salesService) {
-      return [];
+    const parsed = ListFiltersSchema.safeParse(query);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.errors);
     }
-    return this.salesService.listTransactions(projectId);
+    if (!this.salesService) {
+      return { items: [], total: 0, pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } };
+    }
+    return this.salesService.listTransactions(projectId, parsed.data);
   }
 
   @Get('project/:projectId/leads')
   async listProjectLeads(
     @Param('projectId') projectId: string,
-    @Query('search') search: string | undefined,
+    @Query() query: Record<string, string>,
     @Request() req: { user: JwtPayload }
   ) {
-    if (!this.salesService) return [];
-    return this.salesService.listLeads(projectId, { id: req.user.sub, role: req.user.role }, search);
+    const parsed = ListFiltersSchema.safeParse(query);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.errors);
+    }
+    if (!this.salesService) {
+      return { items: [], total: 0, pageInfo: { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null } };
+    }
+    return this.salesService.listLeads(projectId, parsed.data, { id: req.user.sub, role: req.user.role });
   }
 
   @Post('project/:projectId/leads/import-csv')
@@ -195,6 +211,9 @@ export class SalesController {
       }
     }
     
+    // Refrescar métricas una sola vez tras el lote completo (no por fila)
+    await this.salesService.refreshMetricsViews().catch(() => {});
+
     return results;
   }
 

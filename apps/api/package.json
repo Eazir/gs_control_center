@@ -16,6 +16,10 @@
     "prisma:migrate": "prisma migrate dev",
     "test:auth": "tsx test/verify-auth.ts",
     "test:casl": "tsx test/verify-casl-rls.ts",
+    "test:sale-status": "tsx test/verify-sale-status.ts",
+    "test:metrics-refresh": "tsx test/verify-metrics-refresh.ts",
+    "test:attribution": "tsx test/verify-attribution.ts",
+    "test:list-filters": "tsx test/verify-list-filters.ts",
     "users:list": "tsx scripts/manage-users.ts list",
     "users:invite": "tsx scripts/manage-users.ts invite"
   },

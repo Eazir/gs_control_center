@@ -15,8 +15,11 @@ export class KpiController {
   async getDashboardMetrics(
     @Param('projectId') projectId: string,
     @Query('period') period?: string,
+    @Query('day') day?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
     @Request() req?: { user: JwtPayload }
   ) {
-    return this.kpiService.getProjectDashboardMetrics(projectId, period, req?.user?.role);
+    return this.kpiService.getProjectDashboardMetrics(projectId, period, req?.user?.role, { day, from, to });
   }
 }

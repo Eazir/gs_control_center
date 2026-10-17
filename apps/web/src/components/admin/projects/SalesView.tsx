@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { fetchWithAuth } from '@/lib/api-client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,12 +20,15 @@ import {
   UserCheck, 
   Package, 
   Users,
-  ArrowRightLeft
+  ArrowRightLeft,
+  X,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { SaleListItem, ProductItem } from '@gs/contracts';
 import { Badge } from '@/components/ui/badge';
 import { getNaturalStatusName, getStatusBadgeClasses } from '@/lib/status-utils';
-import { TransactionDetailModal } from './TransactionDetailModal';
+import { TransactionDetailModal, TransactionData } from './TransactionDetailModal';
 
 export interface SalesViewMember {
   id: string;
@@ -111,13 +115,38 @@ export function SalesView({
 }: SalesViewProps) {
   // Un CLOSER solo opera sobre sus propias ventas: no puede atribuirle la venta a otro closer.
   const isCloser = effectiveRole === 'CLOSER';
+  const searchParams = useSearchParams();
+
+  // Estados de filtros de servidor
+  const [originFilter, setOriginFilter] = useState<string>(() => searchParams?.get('origin') || 'todos');
+  const [statusFilter, setStatusFilter] = useState<string>(() => searchParams?.get('status') || 'ALL');
+  const [productFilter, setProductFilter] = useState<string>(() => searchParams?.get('productId') || 'ALL');
+  const [closerFilter, setCloserFilter] = useState<string>(() => searchParams?.get('closerId') || 'ALL');
+  const [dayFilter, setDayFilter] = useState<string>(() => searchParams?.get('day') || '');
+  const [searchTerm, setSearchTerm] = useState<string>(() => searchParams?.get('search') || '');
+
+  // Paginación keyset
+  const [currentCursor, setCurrentCursor] = useState<string | null>(() => searchParams?.get('cursor') || null);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [pageNumber, setPageNumber] = useState<number>(1);
+  const [total, setTotal] = useState<number>(0);
+  const [pageInfo, setPageInfo] = useState<{
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string | null;
+    endCursor: string | null;
+  }>({
+    hasNextPage: false,
+    hasPreviousPage: false,
+    startCursor: null,
+    endCursor: null,
+  });
 
   const [sales, setSales] = useState<SaleListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
   
-  const [selectedTxn, setSelectedTxn] = useState<any | null>(null);
+  const [selectedTxn, setSelectedTxn] = useState<SaleListItem | null>(null);
 
   // Sincronizar selectedTxn si los datos de ventas cambian tras guardar en el modal
   useEffect(() => {
@@ -317,19 +346,49 @@ export function SalesView({
     return match?.name || 'Mi usuario';
   }, [availableClosers, currentUserId]);
 
-  // Carga de ventas desde la API
-  const loadSales = async () => {
+  // Carga de ventas desde la API (con envelope paginado y filtros de servidor)
+  const loadSales = useCallback(async (targetCursor?: string | null) => {
     if (!projectId) return;
     setIsLoading(true);
     setLoadError(null);
     try {
-      const res = await fetchWithAuth(`/sales/project/${projectId}`);
+      const params = new URLSearchParams();
+      if (originFilter && originFilter !== 'todos') params.set('origin', originFilter);
+      if (statusFilter && statusFilter !== 'ALL') params.set('status', statusFilter);
+      if (productFilter && productFilter !== 'ALL') params.set('productId', productFilter);
+      if (closerFilter && closerFilter !== 'ALL' && !isCloser) params.set('closerId', closerFilter);
+      if (dayFilter) params.set('day', dayFilter);
+      if (searchTerm.trim()) params.set('search', searchTerm.trim());
+
+      const activeCursor = targetCursor !== undefined ? targetCursor : currentCursor;
+      if (activeCursor) params.set('cursor', activeCursor);
+      params.set('limit', '50');
+
+      // Reflejar en URL sin recarga completa
+      if (typeof window !== 'undefined') {
+        const queryStr = params.toString() ? `?${params.toString()}` : '';
+        window.history.replaceState(null, '', `${window.location.pathname}${queryStr}`);
+      }
+
+      const res = await fetchWithAuth(`/sales/project/${projectId}?${params.toString()}`);
       if (!res.ok) {
         const errorText = await res.text().catch(() => '');
         throw new Error(errorText || `Error ${res.status}: No se pudieron cargar las ventas`);
       }
       const data = await res.json();
-      setSales(Array.isArray(data) ? data : []);
+      if (data && typeof data === 'object' && Array.isArray(data.items)) {
+        setSales(data.items);
+        setTotal(data.total ?? 0);
+        setPageInfo(data.pageInfo ?? { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+      } else if (Array.isArray(data)) {
+        setSales(data);
+        setTotal(data.length);
+        setPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+      } else {
+        setSales([]);
+        setTotal(0);
+        setPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error inesperado al cargar las ventas';
       console.error('[SalesView] Error loading sales:', err);
@@ -337,11 +396,42 @@ export function SalesView({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [projectId, originFilter, statusFilter, productFilter, closerFilter, dayFilter, searchTerm, currentCursor, isCloser]);
 
   useEffect(() => {
     loadSales();
-  }, [projectId]);
+  }, [loadSales]);
+
+  // Manejadores de paginación keyset
+  const handleNextPage = () => {
+    if (!pageInfo.hasNextPage || !pageInfo.endCursor) return;
+    setCursorStack((prev) => [...prev, currentCursor || '']);
+    setCurrentCursor(pageInfo.endCursor);
+    setPageNumber((prev) => prev + 1);
+  };
+
+  const handlePrevPage = () => {
+    if (!pageInfo.hasPreviousPage || cursorStack.length === 0) return;
+    const prevCursor = cursorStack[cursorStack.length - 1];
+    setCursorStack((prev) => prev.slice(0, -1));
+    const nextCursor = prevCursor === '' ? null : (prevCursor || null);
+    setCurrentCursor(nextCursor);
+    setPageNumber((prev) => Math.max(1, prev - 1));
+  };
+
+  const resetFiltersAndPagination = () => {
+    setOriginFilter('todos');
+    setStatusFilter('ALL');
+    setProductFilter('ALL');
+    setCloserFilter('ALL');
+    setDayFilter('');
+    setSearchTerm('');
+    setCurrentCursor(null);
+    setCursorStack([]);
+    setPageNumber(1);
+  };
+
+  const hasActiveFilters = originFilter !== 'todos' || statusFilter !== 'ALL' || productFilter !== 'ALL' || (closerFilter !== 'ALL' && !isCloser) || !!dayFilter || !!searchTerm;
 
   // Al abrir el modal, pre-configurar selecciones
   const handleOpenManualModal = () => {
@@ -539,23 +629,6 @@ export function SalesView({
     }
   };
 
-
-
-  // Filtrado de ventas
-  const filteredSales = sales.filter((s) => {
-    // En la vista de Ventas principales, solo mostramos las ventas efectivas
-    const isSuccessStatus = ['APPROVED', 'PURCHASE_APPROVED', 'COMPLETE', 'COMPLETED', 'PURCHASE_COMPLETE', 'PENDING'].includes(s.status);
-    if (!isSuccessStatus) return false;
-
-    const q = searchTerm.toLowerCase();
-    return (
-      s.lead?.email?.toLowerCase().includes(q) ||
-      s.lead?.name?.toLowerCase().includes(q) ||
-      s.externalOrderId?.toLowerCase().includes(q) ||
-      s.productName?.toLowerCase().includes(q)
-    );
-  });
-
   return (
     <div className="space-y-6">
       {/* CABECERA */}
@@ -590,7 +663,7 @@ export function SalesView({
           <Button
             variant="outline"
             size="sm"
-            onClick={loadSales}
+            onClick={() => loadSales()}
             disabled={isLoading}
             className="border-destructive/30 hover:bg-destructive/20 text-destructive gap-1"
           >
@@ -602,19 +675,187 @@ export function SalesView({
 
       {/* TABLA PRINCIPAL DE VENTAS */}
       <Card className="p-0 border-border bg-card overflow-hidden shadow-sm">
-        <div className="p-4 border-b border-border flex justify-between items-center bg-muted/30">
-          <div className="relative w-full max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por email, lead, producto o ID..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onFocus={(e) => e.target.select()}
-              className="pl-9 bg-background border-border focus:border-primary text-foreground"
-            />
+        {/* BARRA DE FILTROS */}
+        <div className="p-4 border-b border-border bg-muted/30 space-y-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Búsqueda servidor */}
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por email, lead, producto o ID..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentCursor(null);
+                  setCursorStack([]);
+                  setPageNumber(1);
+                }}
+                className="pl-9 pr-7 bg-background border-border focus:border-primary text-foreground text-xs h-9"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setCurrentCursor(null);
+                    setCursorStack([]);
+                    setPageNumber(1);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+
+            {/* Selector de Origen */}
+            <Select
+              value={originFilter}
+              onValueChange={(val) => {
+                setOriginFilter(val);
+                setCurrentCursor(null);
+                setCursorStack([]);
+                setPageNumber(1);
+              }}
+            >
+              <SelectTrigger className="w-[140px] h-9 text-xs bg-background border-border">
+                <SelectValue placeholder="Origen" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos los orígenes</SelectItem>
+                <SelectItem value="comercial">Comercial</SelectItem>
+                <SelectItem value="marketing">Marketing</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Selector de Estado */}
+            <Select
+              value={statusFilter}
+              onValueChange={(val) => {
+                setStatusFilter(val);
+                setCurrentCursor(null);
+                setCursorStack([]);
+                setPageNumber(1);
+              }}
+            >
+              <SelectTrigger className="w-[150px] h-9 text-xs bg-background border-border">
+                <SelectValue placeholder="Estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Todos los estados</SelectItem>
+                <SelectItem value="APPROVED">Aprobada</SelectItem>
+                <SelectItem value="COMPLETE">Completada</SelectItem>
+                <SelectItem value="PENDING">Pendiente</SelectItem>
+                <SelectItem value="REFUNDED">Reembolsada</SelectItem>
+                <SelectItem value="CANCELED">Cancelada</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Selector de Producto */}
+            <Select
+              value={productFilter}
+              onValueChange={(val) => {
+                setProductFilter(val);
+                setCurrentCursor(null);
+                setCursorStack([]);
+                setPageNumber(1);
+              }}
+            >
+              <SelectTrigger className="w-[160px] h-9 text-xs bg-background border-border">
+                <SelectValue placeholder="Producto" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Todos los productos</SelectItem>
+                {products.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Selector de Closer (deshabilitado si isCloser) */}
+            {!isCloser && (
+              <Select
+                value={closerFilter}
+                onValueChange={(val) => {
+                  setCloserFilter(val);
+                  setCurrentCursor(null);
+                  setCursorStack([]);
+                  setPageNumber(1);
+                }}
+              >
+                <SelectTrigger className="w-[150px] h-9 text-xs bg-background border-border">
+                  <SelectValue placeholder="Closer" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">Todos los closers</SelectItem>
+                  {availableClosers.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            {/* Selector de Día */}
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="date"
+                value={dayFilter}
+                onChange={(e) => {
+                  setDayFilter(e.target.value);
+                  setCurrentCursor(null);
+                  setCursorStack([]);
+                  setPageNumber(1);
+                }}
+                className="w-36 h-9 text-xs bg-background border-border"
+              />
+            </div>
+
+            {hasActiveFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={resetFiltersAndPagination}
+                className="h-9 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Limpiar filtros
+              </Button>
+            )}
           </div>
-          <div className="text-xs text-muted-foreground font-mono">
-            {sales.length} transacciones registradas
+        </div>
+
+        {/* CONTADOR Y PAGINACIÓN AL INICIO DE LA TABLA (ENCIMA DE <Table>) */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-2.5 bg-muted/10 border-b border-border">
+          <div className="text-xs text-muted-foreground font-medium">
+            Total de ventas: <span className="font-bold text-foreground font-mono">{total}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground mr-1">
+              Página <span className="font-semibold text-foreground">{pageNumber}</span>
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePrevPage}
+              disabled={!pageInfo.hasPreviousPage || cursorStack.length === 0 || isLoading}
+              className="h-7 px-2.5 text-xs flex items-center gap-1"
+            >
+              <ChevronLeft size={13} />
+              Anterior
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleNextPage}
+              disabled={!pageInfo.hasNextPage || !pageInfo.endCursor || isLoading}
+              className="h-7 px-2.5 text-xs flex items-center gap-1"
+            >
+              Siguiente
+              <ChevronRight size={13} />
+            </Button>
           </div>
         </div>
 
@@ -641,7 +882,7 @@ export function SalesView({
                     </TableCell>
                   </TableRow>
                 ))
-              ) : filteredSales.length === 0 ? (
+              ) : sales.length === 0 ? (
                 /* ESTADO 3: EMPTY CON CTA */
                 <TableRow>
                   <TableCell colSpan={7} className="text-center py-16">
@@ -650,14 +891,14 @@ export function SalesView({
                         <DollarSign className="w-6 h-6" />
                       </div>
                       <div className="font-semibold text-foreground">
-                        {searchTerm ? 'No se encontraron resultados' : 'Sin ventas registradas todavía'}
+                        {hasActiveFilters ? 'No se encontraron resultados' : 'Sin ventas registradas todavía'}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {searchTerm
-                          ? `No hay transacciones que coincidan con "${searchTerm}".`
+                        {hasActiveFilters
+                          ? 'No hay ventas que coincidan con los filtros seleccionados.'
                           : 'Registra una venta manual para asignar comisiones al closer o importa un archivo CSV histórico.'}
                       </p>
-                      {!searchTerm && (
+                      {!hasActiveFilters && (
                         <Button
                           size="sm"
                           className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium mt-2"
@@ -672,7 +913,7 @@ export function SalesView({
                 </TableRow>
               ) : (
                 /* ESTADO 4: DATA */
-                (filteredSales as (SaleListItem & { closerName?: string | null, closerEmail?: string | null })[]).map((sale) => (
+                (sales as (SaleListItem & { closerName?: string | null, closerEmail?: string | null })[]).map((sale) => (
                   <TableRow 
                     key={sale.id} 
                     className="border-border hover:bg-muted/40 transition-colors cursor-pointer"
@@ -1062,8 +1303,8 @@ export function SalesView({
       <TransactionDetailModal 
         isOpen={!!selectedTxn}
         onClose={() => setSelectedTxn(null)}
-        transaction={selectedTxn}
-        allTransactions={sales as any}
+        transaction={selectedTxn as unknown as TransactionData | null}
+        allTransactions={sales as unknown as TransactionData[]}
         projectId={projectId}
         activeClosers={members.filter(m => m.roleInProject === 'CLOSER').map(m => ({ id: m.userId, name: m.userName || m.userEmail || m.userId }))}
         pipelineStages={pipelineStages}

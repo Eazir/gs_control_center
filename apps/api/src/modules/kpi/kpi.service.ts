@@ -9,8 +9,17 @@ import {
   type ProductKpiRow,
 } from './kpi-metrics.util';
 
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+export interface DashboardDateFilters {
+  day?: string | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+}
+
 type DashboardOptions = {
-  hideOperational?: boolean;
+  hideOperational?: boolean | undefined;
+  filters?: DashboardDateFilters | undefined;
 };
 
 @Injectable()
@@ -28,11 +37,73 @@ export class KpiService {
   async getProjectDashboardMetrics(
     projectId: string,
     period: string | undefined,
-    role?: UserRole
+    role?: UserRole,
+    filters?: DashboardDateFilters
   ) {
     const periodDays = parseDashboardPeriod(period);
     const hideOperational = role === 'CLIENTE';
-    return this.buildDashboard(projectId, periodDays, { hideOperational });
+    return this.buildDashboard(projectId, periodDays, { hideOperational, filters });
+  }
+
+  /**
+   * Construye el fragmento SQL y parámetros para el filtro temporal del dashboard.
+   * Prioridad:
+   * 1. day: AND column = $n::date
+   * 2. from + to: AND column BETWEEN $n::date AND $m::date
+   * 3. from solo: AND column >= $n::date
+   * 4. to solo: AND column <= $n::date
+   * 5. periodDays: AND column >= CURRENT_DATE - CAST($n AS INTEGER)
+   * 6. sin filtro: ''
+   */
+  private buildDateFilterSql(
+    column: 'kpi_date' | 'created_at::date',
+    periodDays: number | null,
+    filters: DashboardDateFilters | undefined,
+    startParam: number
+  ): { sql: string; params: Array<string | number> } {
+    const validDay = filters?.day && DATE_REGEX.test(filters.day) ? filters.day : undefined;
+    const validFrom = filters?.from && DATE_REGEX.test(filters.from) ? filters.from : undefined;
+    const validTo = filters?.to && DATE_REGEX.test(filters.to) ? filters.to : undefined;
+
+    if (validDay) {
+      return {
+        sql: `AND ${column} = $${startParam}::date`,
+        params: [validDay],
+      };
+    }
+
+    if (validFrom && validTo) {
+      return {
+        sql: `AND ${column} BETWEEN $${startParam}::date AND $${startParam + 1}::date`,
+        params: [validFrom, validTo],
+      };
+    }
+
+    if (validFrom) {
+      return {
+        sql: `AND ${column} >= $${startParam}::date`,
+        params: [validFrom],
+      };
+    }
+
+    if (validTo) {
+      return {
+        sql: `AND ${column} <= $${startParam}::date`,
+        params: [validTo],
+      };
+    }
+
+    if (periodDays !== null) {
+      return {
+        sql: `AND ${column} >= CURRENT_DATE - CAST($${startParam} AS INTEGER)`,
+        params: [periodDays],
+      };
+    }
+
+    return {
+      sql: '',
+      params: [],
+    };
   }
 
   private async buildDashboard(
@@ -40,10 +111,8 @@ export class KpiService {
     periodDays: number | null,
     options: DashboardOptions
   ) {
-    const dateFilterSql =
-      periodDays !== null ? `AND kpi_date >= CURRENT_DATE - CAST($2 AS INTEGER)` : '';
-    const params: Array<string | number> =
-      periodDays !== null ? [projectId, periodDays] : [projectId];
+    const mvFilter = this.buildDateFilterSql('kpi_date', periodDays, options.filters, 2);
+    const mvParams: Array<string | number> = [projectId, ...mvFilter.params];
 
     const rawGlobal = await this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
       `
@@ -60,9 +129,9 @@ export class KpiService {
         SUM(externas_ventas) AS externas_ventas,
         SUM(externas_facturacion) AS externas_facturacion
       FROM sales.mv_project_daily_metrics
-      WHERE project_id = $1::uuid ${dateFilterSql}
+      WHERE project_id = $1::uuid ${mvFilter.sql}
     `,
-      ...params
+      ...mvParams
     );
 
     const global = rawGlobal[0] || {};
@@ -91,11 +160,11 @@ export class KpiService {
         SUM(count_sales) as ventas,
         SUM(sum_gross) as facturacion
       FROM sales.mv_product_daily_kpis
-      WHERE project_id = $1::uuid ${dateFilterSql}
+      WHERE project_id = $1::uuid ${mvFilter.sql}
       GROUP BY product_name, product_id
       ORDER BY facturacion DESC
     `,
-      ...params
+      ...mvParams
     );
 
     const productRows: ProductKpiRow[] = rawProducts.map((row) => ({
@@ -108,6 +177,9 @@ export class KpiService {
     // Bruto/Detalle del equipo comercial = SOLO ventas con closer_id (NO marketing).
     // Usamos sales.sales directamente y replicamos el FILTER de aprobado de las MVs
     // para ser consistentes con la regla reciente de normalización de estados.
+    const commercialFilter = this.buildDateFilterSql('created_at::date', periodDays, options.filters, 2);
+    const commercialParams: Array<string | number> = [projectId, ...commercialFilter.params];
+
     const rawCommercialProducts = await this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
       `
       SELECT
@@ -119,11 +191,11 @@ export class KpiService {
       WHERE project_id = $1::uuid
         AND closer_id IS NOT NULL
         AND status IN ('APPROVED','PURCHASE_APPROVED','COMPLETE','PURCHASE_COMPLETE','APROBADO','COMPLETA','COMPLETO')
-        ${periodDays !== null ? 'AND created_at::date >= CURRENT_DATE - CAST($2 AS INTEGER)' : ''}
+        ${commercialFilter.sql}
       GROUP BY product_name, product_id
       ORDER BY facturacion DESC
     `,
-      ...params
+      ...commercialParams
     );
 
     const commercialProductRows: ProductKpiRow[] = rawCommercialProducts.map((row) => ({
@@ -195,11 +267,11 @@ export class KpiService {
         SUM(ventas_totales) as ventas,
         SUM(facturacion_bruta) as facturacion
       FROM sales.mv_project_daily_metrics
-      WHERE project_id = $1::uuid ${dateFilterSql}
+      WHERE project_id = $1::uuid ${mvFilter.sql}
       GROUP BY kpi_date
       ORDER BY kpi_date ASC
     `,
-      ...params
+      ...mvParams
     );
 
     const salesVolumeChart = rawChart.map((row) => ({
@@ -217,11 +289,11 @@ export class KpiService {
         SUM(count_sales) as ventas,
         SUM(sum_gross) as facturacion
       FROM sales.mv_closer_daily_kpis
-      WHERE project_id = $1::uuid ${dateFilterSql}
+      WHERE project_id = $1::uuid ${mvFilter.sql}
       GROUP BY closer_id
       ORDER BY facturacion DESC
     `,
-          ...params
+          ...mvParams
         );
 
     const closerIds = rawClosers.map((r) => r.closer_id as string).filter(Boolean);

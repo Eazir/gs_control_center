@@ -17,6 +17,8 @@ up: ##: Levanta el entorno completo de desarrollo
 	$(COMPOSE_DEV) up -d
 up-db: ##: Levanta solo Postgres y Redis para desarrollo local
 	$(COMPOSE_DEV) up -d postgres redis
+rebuild: ##: Reconstruye la imagen de un servicio y recrea su contenedor (uso: make rebuild S=api)
+	$(COMPOSE_DEV) up -d --build $(S)
 dev: ##: Ejecuta pnpm dev en local (Fast Refresh para frontend y backend)
 	pnpm dev
 down: ##: Detiene los contenedores conservando los datos
@@ -87,4 +89,4 @@ prod-restore: ##: Restaura un respaldo en un entorno limpio (uso: make prod-rest
 prod-rollback: ##: Vuelve a la imagen anterior (uso: make prod-rollback TAG=sha)
 	TAG=$(TAG) $(COMPOSE_PROD) up -d
 
-.PHONY: help up up-db dev down reset logs sh ps migrate migration seed seed-admin crypto psql studio lint types test test-int test-e2e check docs docs-serve docs-check module prod-deploy prod-migrate prod-logs prod-backup prod-restore prod-rollback
+.PHONY: help up up-db rebuild dev down reset logs sh ps migrate migration seed seed-admin crypto psql studio lint types test test-int test-e2e check docs docs-serve docs-check module prod-deploy prod-migrate prod-logs prod-backup prod-restore prod-rollback

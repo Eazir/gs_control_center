@@ -1,11 +1,26 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { fetchWithAuth } from '@/lib/api-client';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Search, RefreshCw, Activity, AlertCircle, List, Upload } from 'lucide-react';
+import { 
+  Search, 
+  RefreshCw, 
+  Activity, 
+  AlertCircle, 
+  List, 
+  Upload, 
+  ChevronLeft, 
+  ChevronRight, 
+  X,
+  Calendar
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { TransactionDetailModal } from './TransactionDetailModal';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -14,6 +29,16 @@ import { getNaturalStatusName, getStatusBadgeClasses } from '@/lib/status-utils'
 
 export interface TransactionsViewProps {
   projectId: string;
+  products?: Array<{ id: string; name: string }>;
+  members?: Array<{ userId: string; userName?: string | null; userEmail?: string | null; roleInProject?: string; userRole?: string | null }>;
+  allUsers?: Array<{ id: string; fullName?: string | null; email?: string | null }>;
+}
+
+interface PageInfo {
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  startCursor: string | null;
+  endCursor: string | null;
 }
 
 /**
@@ -23,12 +48,34 @@ export interface TransactionsViewProps {
  * Esta vista está restringida únicamente a roles gerenciales (Director, Admin, Super Admin).
  * Los Closers no tienen acceso a este listado.
  */
-export function TransactionsView({ projectId }: TransactionsViewProps) {
+export function TransactionsView({ projectId, products = [], members = [], allUsers = [] }: TransactionsViewProps) {
+  const searchParams = useSearchParams();
+
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [total, setTotal] = useState<number>(0);
+  const [pageInfo, setPageInfo] = useState<PageInfo>({
+    hasNextPage: false,
+    hasPreviousPage: false,
+    startCursor: null,
+    endCursor: null,
+  });
+
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  
+
+  // Filtros
+  const [originFilter, setOriginFilter] = useState<string>(() => searchParams?.get('origin') || 'todos');
+  const [statusFilter, setStatusFilter] = useState<string>(() => searchParams?.get('status') || 'ALL');
+  const [productFilter, setProductFilter] = useState<string>(() => searchParams?.get('productId') || 'ALL');
+  const [closerFilter, setCloserFilter] = useState<string>(() => searchParams?.get('closerId') || 'ALL');
+  const [dayFilter, setDayFilter] = useState<string>(() => searchParams?.get('day') || '');
+  const [searchTerm, setSearchTerm] = useState<string>(() => searchParams?.get('search') || '');
+
+  // Paginación keyset
+  const [currentCursor, setCurrentCursor] = useState<string | null>(() => searchParams?.get('cursor') || null);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [pageNumber, setPageNumber] = useState<number>(1);
+
   const [selectedTxn, setSelectedTxn] = useState<any | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
@@ -42,18 +89,83 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
     }
   }, [transactions, selectedTxn]);
 
-  const loadTransactions = async () => {
+  // Lista de closers disponibles
+  const availableClosers = useMemo(() => {
+    const map = new Map<string, string>();
+    members.forEach((m) => {
+      if (m.userId) {
+        map.set(m.userId, m.userName || m.userEmail || m.userId);
+      }
+    });
+    allUsers.forEach((u) => {
+      if (u.id && !map.has(u.id)) {
+        map.set(u.id, u.fullName || u.email || u.id);
+      }
+    });
+    transactions.forEach((t) => {
+      if (t.closerId && !map.has(t.closerId)) {
+        map.set(t.closerId, t.closerName || t.closerEmail || t.closerId);
+      }
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [members, allUsers, transactions]);
+
+  // Lista de productos disponibles
+  const availableProducts = useMemo(() => {
+    const map = new Map<string, string>();
+    products.forEach((p) => {
+      if (p.id) map.set(p.id, p.name);
+    });
+    transactions.forEach((t) => {
+      if (t.productId && t.productName && !map.has(t.productId)) {
+        map.set(t.productId, t.productName);
+      }
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [products, transactions]);
+
+  const loadTransactions = useCallback(async (targetCursor?: string | null) => {
     if (!projectId) return;
     setIsLoading(true);
     setLoadError(null);
     try {
-      const res = await fetchWithAuth(`/sales/project/${projectId}/transactions`);
+      const params = new URLSearchParams();
+      if (originFilter && originFilter !== 'todos') params.set('origin', originFilter);
+      if (statusFilter && statusFilter !== 'ALL') params.set('status', statusFilter);
+      if (productFilter && productFilter !== 'ALL') params.set('productId', productFilter);
+      if (closerFilter && closerFilter !== 'ALL') params.set('closerId', closerFilter);
+      if (dayFilter) params.set('day', dayFilter);
+      if (searchTerm.trim()) params.set('search', searchTerm.trim());
+
+      const activeCursor = targetCursor !== undefined ? targetCursor : currentCursor;
+      if (activeCursor) params.set('cursor', activeCursor);
+      params.set('limit', '50');
+
+      // Reflejar en URL sin recarga completa
+      if (typeof window !== 'undefined') {
+        const queryStr = params.toString() ? `?${params.toString()}` : '';
+        window.history.replaceState(null, '', `${window.location.pathname}${queryStr}`);
+      }
+
+      const res = await fetchWithAuth(`/sales/project/${projectId}/transactions?${params.toString()}`);
       if (!res.ok) {
         const errorText = await res.text().catch(() => '');
         throw new Error(errorText || `Error ${res.status}: No se pudieron cargar las transacciones`);
       }
       const data = await res.json();
-      setTransactions(Array.isArray(data) ? data : []);
+      if (data && typeof data === 'object' && Array.isArray(data.items)) {
+        setTransactions(data.items);
+        setTotal(data.total ?? 0);
+        setPageInfo(data.pageInfo ?? { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+      } else if (Array.isArray(data)) {
+        setTransactions(data);
+        setTotal(data.length);
+        setPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+      } else {
+        setTransactions([]);
+        setTotal(0);
+        setPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error inesperado al cargar las transacciones';
       console.error('[TransactionsView] Error loading transactions:', err);
@@ -61,28 +173,40 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [projectId, originFilter, statusFilter, productFilter, closerFilter, dayFilter, searchTerm, currentCursor]);
 
   useEffect(() => {
     loadTransactions();
-  }, [projectId]);
+  }, [loadTransactions]);
 
-  const filteredTransactions = useMemo(() => {
-    const q = searchTerm.toLowerCase().trim();
-    if (!q) return transactions;
-    return transactions.filter((t) => {
-      const leadName = (t.lead?.name || 'Sin nombre').toLowerCase();
-      const leadEmail = (t.lead?.email || '').toLowerCase();
-      const productName = (t.productName || '').toLowerCase();
-      const txnId = (t.externalTxnId || '').toLowerCase();
-      return (
-        leadName.includes(q) ||
-        leadEmail.includes(q) ||
-        productName.includes(q) ||
-        txnId.includes(q)
-      );
-    });
-  }, [transactions, searchTerm]);
+  // Manejadores de paginación
+  const handleNextPage = () => {
+    if (!pageInfo.hasNextPage || !pageInfo.endCursor) return;
+    setCursorStack((prev) => [...prev, currentCursor || '']);
+    setCurrentCursor(pageInfo.endCursor);
+    setPageNumber((prev) => prev + 1);
+  };
+
+  const handlePrevPage = () => {
+    if (!pageInfo.hasPreviousPage || cursorStack.length === 0) return;
+    const prevCursor = cursorStack[cursorStack.length - 1];
+    setCursorStack((prev) => prev.slice(0, -1));
+    const nextCursor = prevCursor === '' ? null : (prevCursor || null);
+    setCurrentCursor(nextCursor);
+    setPageNumber((prev) => Math.max(1, prev - 1));
+  };
+
+  const resetFiltersAndPagination = () => {
+    setOriginFilter('todos');
+    setStatusFilter('ALL');
+    setProductFilter('ALL');
+    setCloserFilter('ALL');
+    setDayFilter('');
+    setSearchTerm('');
+    setCurrentCursor(null);
+    setCursorStack([]);
+    setPageNumber(1);
+  };
 
   const getStatusBadge = (status: string) => {
     const naturalName = getNaturalStatusName(status);
@@ -98,6 +222,8 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
       maximumFractionDigits: 2,
     }).format(amount);
   };
+
+  const hasActiveFilters = originFilter !== 'todos' || statusFilter !== 'ALL' || productFilter !== 'ALL' || closerFilter !== 'ALL' || !!dayFilter || !!searchTerm;
 
   return (
     <div className="space-y-6 animate-in fade-in-50">
@@ -120,7 +246,7 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
             Importar Transacciones
           </button>
           <button
-            onClick={loadTransactions}
+            onClick={() => loadTransactions(currentCursor)}
             disabled={isLoading}
             className="px-3 py-2 bg-card border border-border/60 hover:bg-muted text-foreground font-medium text-sm rounded-lg transition-colors flex items-center gap-2"
           >
@@ -133,30 +259,203 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
       {loadError && (
         <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start gap-3">
           <AlertCircle className="text-red-500 shrink-0 mt-0.5" size={18} />
-          <div>
+          <div className="flex-1">
             <h3 className="text-sm font-semibold text-red-500">Error al cargar transacciones</h3>
             <p className="text-xs text-red-400 mt-1">{loadError}</p>
           </div>
+          <Button variant="outline" size="sm" onClick={() => loadTransactions(currentCursor)} className="text-xs">
+            Reintentar
+          </Button>
         </div>
       )}
 
       <Card className="p-0 border-border bg-card overflow-hidden shadow-sm">
-        <div className="p-4 border-b border-border flex justify-between items-center bg-muted/30">
-          <div className="relative w-full max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por email, lead, producto o ID..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onFocus={(e) => e.target.select()}
-              className="pl-9 bg-background border-border focus:border-primary text-foreground"
-            />
-          </div>
-          <div className="text-xs text-muted-foreground font-mono">
-            {transactions.length} transacciones registradas
+        {/* BARRA DE FILTROS */}
+        <div className="p-4 border-b border-border bg-muted/30 space-y-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Búsqueda servidor */}
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por email, lead, producto o ID..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentCursor(null);
+                  setCursorStack([]);
+                  setPageNumber(1);
+                }}
+                className="pl-9 pr-7 bg-background border-border focus:border-primary text-foreground text-xs h-9"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setCurrentCursor(null);
+                    setCursorStack([]);
+                    setPageNumber(1);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+
+            {/* Selector de Origen */}
+            <Select
+              value={originFilter}
+              onValueChange={(val) => {
+                setOriginFilter(val);
+                setCurrentCursor(null);
+                setCursorStack([]);
+                setPageNumber(1);
+              }}
+            >
+              <SelectTrigger className="w-[140px] h-9 text-xs bg-background border-border">
+                <SelectValue placeholder="Origen" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos los orígenes</SelectItem>
+                <SelectItem value="comercial">Comercial</SelectItem>
+                <SelectItem value="marketing">Marketing</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Selector de Estado */}
+            <Select
+              value={statusFilter}
+              onValueChange={(val) => {
+                setStatusFilter(val);
+                setCurrentCursor(null);
+                setCursorStack([]);
+                setPageNumber(1);
+              }}
+            >
+              <SelectTrigger className="w-[150px] h-9 text-xs bg-background border-border">
+                <SelectValue placeholder="Estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Todos los estados</SelectItem>
+                <SelectItem value="APPROVED">Aprobada</SelectItem>
+                <SelectItem value="COMPLETE">Completada</SelectItem>
+                <SelectItem value="PENDING">Pendiente</SelectItem>
+                <SelectItem value="REFUNDED">Reembolsada</SelectItem>
+                <SelectItem value="CHARGEBACK">Chargeback</SelectItem>
+                <SelectItem value="CANCELED">Cancelada</SelectItem>
+                <SelectItem value="ABANDONED_CART">Carrito Abandonado</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Selector de Producto */}
+            <Select
+              value={productFilter}
+              onValueChange={(val) => {
+                setProductFilter(val);
+                setCurrentCursor(null);
+                setCursorStack([]);
+                setPageNumber(1);
+              }}
+            >
+              <SelectTrigger className="w-[160px] h-9 text-xs bg-background border-border">
+                <SelectValue placeholder="Producto" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Todos los productos</SelectItem>
+                {availableProducts.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Selector de Closer */}
+            <Select
+              value={closerFilter}
+              onValueChange={(val) => {
+                setCloserFilter(val);
+                setCurrentCursor(null);
+                setCursorStack([]);
+                setPageNumber(1);
+              }}
+            >
+              <SelectTrigger className="w-[150px] h-9 text-xs bg-background border-border">
+                <SelectValue placeholder="Closer" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Todos los closers</SelectItem>
+                {availableClosers.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Selector de Día */}
+            <div className="flex items-center gap-1.5">
+              <Calendar size={14} className="text-muted-foreground" />
+              <Input
+                type="date"
+                value={dayFilter}
+                onChange={(e) => {
+                  setDayFilter(e.target.value);
+                  setCurrentCursor(null);
+                  setCursorStack([]);
+                  setPageNumber(1);
+                }}
+                className="w-36 h-9 text-xs bg-background border-border"
+              />
+            </div>
+
+            {hasActiveFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={resetFiltersAndPagination}
+                className="h-9 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Limpiar filtros
+              </Button>
+            )}
           </div>
         </div>
 
+        {/* CONTADOR Y PAGINACIÓN AL INICIO DE LA TABLA */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-2.5 bg-muted/10 border-b border-border">
+          <div className="text-xs text-muted-foreground font-medium">
+            Total de transacciones: <span className="font-bold text-foreground font-mono">{total}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground mr-1">
+              Página <span className="font-semibold text-foreground">{pageNumber}</span>
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePrevPage}
+              disabled={!pageInfo.hasPreviousPage || cursorStack.length === 0 || isLoading}
+              className="h-7 px-2.5 text-xs flex items-center gap-1"
+            >
+              <ChevronLeft size={13} />
+              Anterior
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleNextPage}
+              disabled={!pageInfo.hasNextPage || !pageInfo.endCursor || isLoading}
+              className="h-7 px-2.5 text-xs flex items-center gap-1"
+            >
+              Siguiente
+              <ChevronRight size={13} />
+            </Button>
+          </div>
+        </div>
+
+        {/* TABLA DE TRANSACCIONES */}
         <div className="overflow-x-auto">
           <Table>
             <TableHeader className="bg-muted/30">
@@ -171,22 +470,24 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
             </TableHeader>
             <TableBody>
               {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <RefreshCw className="h-5 w-5 animate-spin text-primary" />
-                      <span className="text-sm">Cargando transacciones...</span>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : filteredTransactions.length === 0 ? (
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <TableRow key={idx} className="border-border">
+                    <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-36 mb-1" /><Skeleton className="h-3 w-24" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                    <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
+                    <TableCell className="text-right"><Skeleton className="h-5 w-20 ml-auto" /></TableCell>
+                  </TableRow>
+                ))
+              ) : transactions.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="h-32 text-center text-muted-foreground text-sm">
-                    {searchTerm ? 'No se encontraron transacciones con esa búsqueda.' : 'No hay transacciones registradas.'}
+                    {hasActiveFilters ? 'No hay transacciones con esos filtros.' : 'No hay transacciones registradas.'}
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredTransactions.map((t) => (
+                transactions.map((t) => (
                   <TableRow 
                     key={t.id} 
                     className="border-border hover:bg-muted/40 transition-colors cursor-pointer group"
@@ -241,7 +542,7 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
             mode="sales" 
             onClose={() => {
               setIsImportModalOpen(false);
-              loadTransactions();
+              loadTransactions(currentCursor);
             }} 
           />
         </DialogContent>
@@ -252,7 +553,7 @@ export function TransactionsView({ projectId }: TransactionsViewProps) {
         onClose={() => setSelectedTxn(null)}
         transaction={selectedTxn}
         allTransactions={transactions}
-        onSaveLead={loadTransactions}
+        onSaveLead={() => loadTransactions(currentCursor)}
       />
     </div>
   );

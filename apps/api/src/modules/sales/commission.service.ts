@@ -94,12 +94,23 @@ export class CommissionService {
     }
 
     // Refrescar vistas materializadas para que el dashboard refleje los cambios
+    await this.refreshMetricsViews();
+  }
+
+  /**
+   * Refresca las vistas materializadas que alimentan el dashboard de métricas.
+   * Debe ejecutarse tras CUALQUIER escritura que cambie el conteo o monto de
+   * ventas efectivas: alta webhook/CSV/manual, cambio de estado (aprobación o
+   * REEMBOLSO) o reasignación de closer. Un reembolso saca la venta del conteo
+   * porque las MVs solo cuentan estados aprobados/completados.
+   */
+  async refreshMetricsViews(): Promise<void> {
     try {
       await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_project_daily_metrics;`);
       await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_closer_daily_kpis;`);
       await this.prisma.$executeRawUnsafe(`REFRESH MATERIALIZED VIEW sales.mv_product_daily_kpis;`);
     } catch (e) {
-      this.logger.error(`Error refrescando vistas tras recalcular comisiones:`, e);
+      this.logger.error(`Error refrescando vistas materializadas de métricas:`, e);
     }
   }
 }

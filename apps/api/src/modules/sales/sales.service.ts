@@ -3,13 +3,23 @@ import { AuthPublicService } from '../auth';
 import { PrismaService } from '../../core/database';
 import { RedisService } from '../../core/redis';
 import { HotmartAdapter } from '../../infrastructure/providers/hotmart/hotmart.adapter';
-import { RawSale, ManualSaleDto, ProductItem, CsvLeadImportDto, CsvSaleImportDto } from '@gs/contracts';
+import { RawSale, ManualSaleDto, ProductItem, CsvLeadImportDto, CsvSaleImportDto, ListFilters } from '@gs/contracts';
 import { ListProjectProductsUseCase } from '../projects';
 import { IntegrationsService } from '../integrations';
 import { EventStatus, Prisma, LeadSituacion } from '@prisma/client';
 import { withRls } from '../../core/database';
-import { normalizeSaleStatus } from '../../core/sales/normalize-sale-status';
-import { normalizeSck, isFixedCommercialSck, isCommercialAffiliate } from '../../core/sales/affiliation';
+import {
+  normalizeSaleStatus,
+  normalizeSck,
+  isFixedCommercialSck,
+  isCommercialAffiliate,
+  isCommercialAffiliateName,
+  resolveAttribution,
+  buildSaleWhereClause,
+  buildLeadWhereClause,
+  encodeCursor,
+  decodeCursor,
+} from '../../core/sales';
 
 import { CommissionService } from './commission.service';
 
@@ -39,7 +49,16 @@ export class SalesService implements OnModuleInit {
       this.startWorkerLoop().catch((err) => {
         this.logger.error('Error crítico al iniciar el Worker Loop', err);
       });
+      this.startMetricsRefreshLoop();
     }
+  }
+
+  /**
+   * Refresca las vistas materializadas de métricas. Expuesto para que el
+   * controlador lo invoque UNA vez tras una importación masiva de ventas.
+   */
+  async refreshMetricsViews(): Promise<void> {
+    await this.commissionService.refreshMetricsViews();
   }
 
   async getSaleDetails(saleId: string, closerId: string) {
@@ -79,6 +98,21 @@ export class SalesService implements OnModuleInit {
         await new Promise((resolve) => setTimeout(resolve, 5000));
       }
     }
+  }
+
+  /**
+   * Respaldo: refresca las vistas materializadas de métricas cada N minutos.
+   * Garantiza que el dashboard nunca quede desactualizado aunque alguna ruta
+   * de escritura (webhook, CSV, manual, reembolso) no dispare el refresco.
+   */
+  private startMetricsRefreshLoop() {
+    const INTERVAL_MS = 60_000; // 1 minuto
+    const timer = setInterval(() => {
+      this.commissionService.refreshMetricsViews().catch((e) =>
+        this.logger.error('Error en el refresco periódico de métricas:', e)
+      );
+    }, INTERVAL_MS);
+    timer.unref(); // no mantiene vivo el proceso solo por el timer
   }
 
   /**
@@ -300,9 +334,8 @@ export class SalesService implements OnModuleInit {
 
       }
 
-      // 4. Atribución de closer:
-      // Única vía: El SCK del webhook coincide con el SCK de algún miembro del proyecto.
-      let closerId: string | null = null;
+      // 4. Atribución de equipo y closer (matriz de 4 reglas + SCK fijos referenciales).
+      let sckCloserId: string | null = null;
 
       const incomingSck = normalizeSck(rawSale.sck);
       if (incomingSck && !matchedProduct?.isMarketing) {
@@ -312,21 +345,17 @@ export class SalesService implements OnModuleInit {
             select: { userId: true, sckCodes: true },
           });
           const hit = members.find(m => (m.sckCodes ?? []).some(c => normalizeSck(c) === incomingSck));
-          if (hit) { closerId = hit.userId; }
+          if (hit) { sckCloserId = hit.userId; }
         } catch {
           // Ignorar si el SCK no resuelve a ningún usuario conocido o si falla la query
         }
       }
 
-      // Reafianza: si no resolvió closer pero el SCK es comercial fijo, o el afiliado es comercial,
-      // la venta es de equipo comercial aunque no coincida un SCK de closer específico.
-      const commercialCode = isFixedCommercialSck(rawSale.sck) || isCommercialAffiliate(rawSale.affiliates);
-      let attribution: 'COMERCIAL' | 'MARKETING' = closerId ? 'COMERCIAL' : (commercialCode ? 'COMERCIAL' : 'MARKETING');
-
-      // Determinar el closer efectivo de la venta: el encontrado por SCK, o el del lead cuando la
-      // venta es de equipo comercial pero no trae un SCK de closer específico.
-      // Regla: si la venta no coincide ni con el SCK del lead ni con comercial ni afiliado,
-      // NO se le asigna el lead.closerId: es MARKETING y sale.closerId queda null.
+      const { closerId, attribution } = resolveAttribution({
+        sckCloserId,
+        sckIsFixedCommercial: isFixedCommercialSck(rawSale.sck),
+        affiliateIsComercial: isCommercialAffiliate(rawSale.affiliates),
+      });
 
       // 5. Valores comerciales tomados estrictamente del producto oficial del proyecto o de la BD histórica
       const officialProductName = matchedProduct!.name!;
@@ -540,7 +569,7 @@ export class SalesService implements OnModuleInit {
               installments: officialInstallments,
               offerCode: rawSale.offerCode ?? matchedProduct?.offerCode ?? null,
               sck: rawSale.sck ?? null,
-              closerId: closerId ?? (attribution === 'COMERCIAL' ? lead.closerId : null) ?? null,
+              closerId,
               pipelineStage: pipelineStage,
               metadata: initialMetadata as Prisma.InputJsonValue,
               createdAt: saleCreatedAt,
@@ -561,6 +590,12 @@ export class SalesService implements OnModuleInit {
       });
 
       this.logger.log(`[OK] Evento ${eventId} procesado exitosamente.`);
+
+      // Refrescar métricas: el evento puede ser una venta nueva, una aprobación
+      // o un REEMBOLSO; en todos los casos el dashboard debe reflejarlo.
+      await this.commissionService.refreshMetricsViews().catch((e) =>
+        this.logger.error(`Error refrescando métricas tras evento ${eventId}:`, e)
+      );
     } catch (error) {
       const err = error as Error;
       this.logger.error(`[ERROR] Evento ${eventId}`, err);
@@ -619,41 +654,66 @@ export class SalesService implements OnModuleInit {
   }
 
   /**
-   * Obtiene la lista de ventas "efectivas" (compras aprobadas o completadas) de un proyecto.
-   * Excluye carritos abandonados, reembolsos, etc.
+   * Obtiene la lista de ventas "efectivas" (compras aprobadas o completadas) de un proyecto con paginación keyset y filtros.
+   * Excluye carritos abandonados, reembolsos, etc. a menos que se especifique un status explícito.
    * Si el usuario es CLOSER, se aplica un filtro RLS implícito para retornar únicamente sus ventas asignadas.
    * Resuelve asíncronamente el nombre y correo del closer asignado.
    *
    * @param projectId Identificador del proyecto.
+   * @param filters Filtros de listado (status, origin, closerId, productId, day/from/to, limit, cursor).
    * @param user Perfil opcional del usuario para aplicar RLS/aislamiento por rol.
-   * @returns Lista de ventas filtradas y enriquecidas con la entidad Closer.
+   * @returns Sobre paginado con ventas filtradas, total y pageInfo.
    */
-  async listSales(projectId: string, user?: { id: string; role: string }) {
+  async listSales(
+    projectId: string,
+    filters: ListFilters,
+    user?: { id: string; role: string },
+  ) {
+    const emptyResponse = {
+      items: [],
+      total: 0,
+      pageInfo: {
+        hasNextPage: false,
+        hasPreviousPage: false,
+        startCursor: null,
+        endCursor: null,
+      },
+    };
+
     try {
       if (!this.prisma || !('sale' in this.prisma)) {
         this.logger.warn(`Prisma model 'sale' no está disponible aún.`);
-        return [];
+        return emptyResponse;
       }
 
-      const whereClause: import('@prisma/client').Prisma.SaleWhereInput = { 
-        projectId,
-        status: { in: ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'], mode: 'insensitive' as const } 
-      };
-      
-      const project = await this.prisma.project.findUnique({
-        where: { id: projectId },
-        select: { products: true }
+      const whereClause = buildSaleWhereClause(projectId, filters, {
+        role: user?.role,
+        userId: user?.id,
+        approvedOnly: true,
       });
-      const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
-      
-      // Aplicar filtro de aislamiento si el rol global del usuario es CLOSER
-      if (user && user.role === 'CLOSER') {
-        whereClause.closerId = user.id;
+
+      const total = await this.prisma.sale.count({ where: whereClause });
+
+      let queryWhere: Prisma.SaleWhereInput = whereClause;
+      if (filters.cursor) {
+        const cur = decodeCursor(filters.cursor);
+        if (cur) {
+          const cursorPredicate: Prisma.SaleWhereInput = {
+            OR: [
+              { createdAt: { lt: cur.createdAt } },
+              { AND: [{ createdAt: cur.createdAt }, { id: { lt: cur.id } }] },
+            ],
+          };
+          queryWhere = {
+            AND: [whereClause, cursorPredicate],
+          };
+        }
       }
 
-      const sales = await this.prisma.sale.findMany({
-        where: whereClause,
-        orderBy: { createdAt: 'desc' },
+      const rows = await this.prisma.sale.findMany({
+        where: queryWhere,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: filters.limit + 1,
         select: {
           id: true,
           source: true,
@@ -679,11 +739,20 @@ export class SalesService implements OnModuleInit {
         },
       });
 
-      const closerIds = Array.from(new Set(sales.map(s => (s as typeof s & { closerId?: string | null }).closerId || s.lead?.closerId).filter(Boolean))) as string[];
+      const hasNext = rows.length > filters.limit;
+      const rawItems = hasNext ? rows.slice(0, filters.limit) : rows;
+
+      const project = await this.prisma.project.findUnique({
+        where: { id: projectId },
+        select: { products: true },
+      });
+      const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
+
+      const closerIds = Array.from(new Set(rawItems.map(s => (s as typeof s & { closerId?: string | null }).closerId || s.lead?.closerId).filter(Boolean))) as string[];
       const closers = await this.authService.getUsersByIds(closerIds);
       const closerMap = new Map(closers.map(c => [c.id, c]));
 
-      return sales.map((s) => {
+      const enriched = rawItems.map((s) => {
         const cId = (s as typeof s & { closerId?: string | null }).closerId || s.lead?.closerId;
         const closer = cId ? closerMap.get(cId) : null;
         return {
@@ -705,7 +774,7 @@ export class SalesService implements OnModuleInit {
           installments: s.installments || 1,
           pipelineStage: s.pipelineStage || null,
           pipelineSubstatus: s.pipelineSubstatus || null,
-          metadata: s.metadata || {},
+          metadata: (s.metadata as Record<string, unknown>) || {},
           createdAt: s.createdAt.toISOString(),
           lead: {
             id: s.lead?.id || null,
@@ -722,37 +791,80 @@ export class SalesService implements OnModuleInit {
           },
         };
       });
+
+      return {
+        items: enriched,
+        total,
+        pageInfo: {
+          hasNextPage: hasNext,
+          hasPreviousPage: !!filters.cursor,
+          startCursor: rawItems.length > 0 ? encodeCursor(rawItems[0]!.createdAt, rawItems[0]!.id) : null,
+          endCursor: rawItems.length > 0 ? encodeCursor(rawItems[rawItems.length - 1]!.createdAt, rawItems[rawItems.length - 1]!.id) : null,
+        },
+      };
     } catch (err) {
       this.logger.error(`Error loading sales for project ${projectId}`, err);
-      return [];
+      return emptyResponse;
     }
   }
 
   /**
-   * Obtiene la lista completa de transacciones (trazabilidad total) de un proyecto.
+   * Obtiene la lista completa de transacciones (trazabilidad total) de un proyecto con paginación keyset y filtros.
    * Incluye ventas aprobadas, rechazadas, pendientes, reembolsadas y carritos abandonados.
    * Restringido a roles gerenciales (ADMIN, DIRECTOR, SUPER_ADMIN). Los closers no tienen acceso.
    * Resuelve asíncronamente el nombre y correo del closer asignado a la transacción.
    *
    * @param projectId Identificador del proyecto.
-   * @returns Lista completa de transacciones históricas enriquecidas.
+   * @param filters Filtros de listado (status, origin, closerId, productId, day/from/to, limit, cursor).
+   * @returns Sobre paginado con transacciones históricas enriquecidas, total y pageInfo.
    */
-  async listTransactions(projectId: string) {
+  async listTransactions(
+    projectId: string,
+    filters: ListFilters,
+  ) {
+    const emptyResponse = {
+      items: [],
+      total: 0,
+      pageInfo: {
+        hasNextPage: false,
+        hasPreviousPage: false,
+        startCursor: null,
+        endCursor: null,
+      },
+    };
+
     try {
       if (!this.prisma || !('sale' in this.prisma)) {
         this.logger.warn(`Prisma model 'sale' no está disponible aún.`);
-        return [];
+        return emptyResponse;
       }
 
-      const project = await this.prisma.project.findUnique({
-        where: { id: projectId },
-        select: { products: true }
+      const whereClause = buildSaleWhereClause(projectId, filters, {
+        approvedOnly: false,
       });
-      const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
 
-      const transactions = await this.prisma.sale.findMany({
-        where: { projectId },
-        orderBy: { createdAt: 'desc' },
+      const total = await this.prisma.sale.count({ where: whereClause });
+
+      let queryWhere: Prisma.SaleWhereInput = whereClause;
+      if (filters.cursor) {
+        const cur = decodeCursor(filters.cursor);
+        if (cur) {
+          const cursorPredicate: Prisma.SaleWhereInput = {
+            OR: [
+              { createdAt: { lt: cur.createdAt } },
+              { AND: [{ createdAt: cur.createdAt }, { id: { lt: cur.id } }] },
+            ],
+          };
+          queryWhere = {
+            AND: [whereClause, cursorPredicate],
+          };
+        }
+      }
+
+      const rows = await this.prisma.sale.findMany({
+        where: queryWhere,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: filters.limit + 1,
         select: {
           id: true,
           source: true,
@@ -778,11 +890,20 @@ export class SalesService implements OnModuleInit {
         },
       });
 
-      const closerIds = Array.from(new Set(transactions.map(t => (t as typeof t & { closerId?: string | null }).closerId || t.lead?.closerId).filter(Boolean))) as string[];
+      const hasNext = rows.length > filters.limit;
+      const rawItems = hasNext ? rows.slice(0, filters.limit) : rows;
+
+      const project = await this.prisma.project.findUnique({
+        where: { id: projectId },
+        select: { products: true },
+      });
+      const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
+
+      const closerIds = Array.from(new Set(rawItems.map(t => (t as typeof t & { closerId?: string | null }).closerId || t.lead?.closerId).filter(Boolean))) as string[];
       const closers = await this.authService.getUsersByIds(closerIds);
       const closerMap = new Map(closers.map(c => [c.id, c]));
 
-      return transactions.map((t) => {
+      const enriched = rawItems.map((t) => {
         const cId = (t as typeof t & { closerId?: string | null }).closerId || t.lead?.closerId;
         const closer = cId ? closerMap.get(cId) : null;
         return {
@@ -804,7 +925,7 @@ export class SalesService implements OnModuleInit {
           installments: t.installments || 1,
           pipelineStage: t.pipelineStage || null,
           pipelineSubstatus: t.pipelineSubstatus || null,
-          metadata: t.metadata || {},
+          metadata: (t.metadata as Record<string, unknown>) || {},
           createdAt: t.createdAt.toISOString(),
           lead: {
             id: t.lead?.id || null,
@@ -820,9 +941,20 @@ export class SalesService implements OnModuleInit {
           },
         };
       });
+
+      return {
+        items: enriched,
+        total,
+        pageInfo: {
+          hasNextPage: hasNext,
+          hasPreviousPage: !!filters.cursor,
+          startCursor: rawItems.length > 0 ? encodeCursor(rawItems[0]!.createdAt, rawItems[0]!.id) : null,
+          endCursor: rawItems.length > 0 ? encodeCursor(rawItems[rawItems.length - 1]!.createdAt, rawItems[rawItems.length - 1]!.id) : null,
+        },
+      };
     } catch (err) {
       this.logger.error(`Error loading transactions for project ${projectId}`, err);
-      return [];
+      return emptyResponse;
     }
   }
 
@@ -931,170 +1063,195 @@ export class SalesService implements OnModuleInit {
   }
 
   /**
-   * Obtiene la base de leads de un proyecto con sus métricas sumadas.
+   * Obtiene la base de leads de un proyecto con sus métricas sumadas, paginación keyset y filtros.
    * Aplica aislamiento de permisos si el usuario es CLOSER.
+   *
+   * @param projectId Identificador del proyecto.
+   * @param filters Filtros de listado (status, origin, closerId, productId, day/from/to, search, limit, cursor).
+   * @param user Perfil opcional del usuario para aplicar RLS/aislamiento por rol.
+   * @returns Sobre paginado con leads enriquecidos, total y pageInfo.
    */
-  async listLeads(projectId: string, user?: { id: string; role: string }, search?: string) {
-    if (!this.prisma || !('lead' in this.prisma)) return [];
-
-    const whereClause: import('@prisma/client').Prisma.LeadWhereInput = { 
-      projectId,
-      AND: []
+  async listLeads(
+    projectId: string,
+    filters: ListFilters,
+    user?: { id: string; role: string },
+  ) {
+    const emptyResponse = {
+      items: [],
+      total: 0,
+      pageInfo: {
+        hasNextPage: false,
+        hasPreviousPage: false,
+        startCursor: null,
+        endCursor: null,
+      },
     };
 
-    if (user && user.role === 'CLOSER') {
-      (whereClause.AND as import('@prisma/client').Prisma.LeadWhereInput[]).push({
-        OR: [
-          { closerId: user.id },
-          { sales: { some: { closerId: user.id } } }
-        ]
+    try {
+      if (!this.prisma || !('lead' in this.prisma)) return emptyResponse;
+
+      const whereClause = buildLeadWhereClause(projectId, filters, {
+        role: user?.role,
+        userId: user?.id,
       });
-    }
 
-    if (search && search.trim()) {
-      const q = search.trim();
-      (whereClause.AND as import('@prisma/client').Prisma.LeadWhereInput[]).push({
-        OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { email: { contains: q, mode: 'insensitive' } },
-          { phone: { contains: q, mode: 'insensitive' } },
-          {
-            sales: {
-              some: {
-                OR: [
-                  { externalTxnId: { contains: q, mode: 'insensitive' } },
-                  { externalOrderId: { contains: q, mode: 'insensitive' } },
-                ],
-              },
-            },
-          },
-        ]
-      });
-    }
+      const total = await this.prisma.lead.count({ where: whereClause });
 
-    // Si el array AND está vacío, lo eliminamos para evitar errores en Prisma
-    if (Array.isArray(whereClause.AND) && whereClause.AND.length === 0) {
-      delete whereClause.AND;
-    }
-
-    const [leads, project] = await Promise.all([
-      this.prisma.lead.findMany({
-        where: whereClause,
-        include: {
-          sales: {
-            orderBy: { createdAt: 'desc' },
-          },
-          interestedProducts: true,
-        },
-        orderBy: { updatedAt: 'desc' },
-      }),
-      this.prisma.project.findUnique({
-        where: { id: projectId },
-        select: { products: true }
-      })
-    ]);
-    const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
-
-    return leads.map(lead => {
-      const EFFECTIVE_STATUSES = ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'];
-      // El valor estimado se calcula solo sobre ventas efectivas (aprobadas)
-      const effectiveSales = lead.sales.filter(s => EFFECTIVE_STATUSES.includes(s.status));
-      // Si hay ventas efectivas, tomar la más reciente; si no, tomar la última transacción cualquiera para mostrar info del producto
-      const representativeSale = effectiveSales[0] ?? lead.sales[0];
-      // Valor = precio del producto * cuotas de la venta más reciente aprobada (no suma duplicados)
-      const estimatedValue = representativeSale ? Number(representativeSale.amount) : 0;
-      
-      // Atribución: si la sale tiene closerId => Comercial, sino => Marketing
-      const hasCloser = !!(representativeSale?.closerId || lead.closerId);
-      const attribution = hasCloser ? 'COMERCIAL' : 'MARKETING';
-
-      // Productos de interés (formato string separado por comas o primer producto)
-      let firstProductName = 'N/A';
-      if (representativeSale?.productName) {
-        firstProductName = representativeSale.productName;
-      } else if (lead.interestedProducts.length > 0) {
-        const interestedNames = lead.interestedProducts.map(ip => {
-          const match = projectProducts.find(p => p.id === ip.productId);
-          return match ? match.name : ip.productId;
-        });
-        firstProductName = interestedNames.join(', ');
+      let queryWhere: Prisma.LeadWhereInput = whereClause;
+      if (filters.cursor) {
+        const cur = decodeCursor(filters.cursor);
+        if (cur) {
+          const cursorPredicate: Prisma.LeadWhereInput = {
+            OR: [
+              { updatedAt: { lt: cur.createdAt } },
+              { AND: [{ updatedAt: cur.createdAt }, { id: { lt: cur.id } }] },
+            ],
+          };
+          queryWhere = {
+            AND: [whereClause, cursorPredicate],
+          };
+        }
       }
 
-      // Agrupar historial por externalOrderId para evitar transacciones repetidas en frontend
-      const historyByOrder = new Map<string, Record<string, unknown>[]>();
-      lead.sales.forEach(s => {
-        const orderId = s.externalOrderId || s.externalTxnId;
-        if (!historyByOrder.has(orderId)) {
-          historyByOrder.set(orderId, []);
+      const [rows, project] = await Promise.all([
+        this.prisma.lead.findMany({
+          where: queryWhere,
+          include: {
+            sales: {
+              orderBy: { createdAt: 'desc' },
+            },
+            interestedProducts: true,
+          },
+          orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+          take: filters.limit + 1,
+        }),
+        this.prisma.project.findUnique({
+          where: { id: projectId },
+          select: { products: true },
+        }),
+      ]);
+
+      const hasNext = rows.length > filters.limit;
+      const rawItems = hasNext ? rows.slice(0, filters.limit) : rows;
+      const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
+
+      const enriched = rawItems.map((lead) => {
+        const EFFECTIVE_STATUSES = ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'];
+        // El valor estimado se calcula solo sobre ventas efectivas (aprobadas)
+        const effectiveSales = lead.sales.filter((s) => EFFECTIVE_STATUSES.includes(s.status));
+        // Si hay ventas efectivas, tomar la más reciente; si no, tomar la última transacción cualquiera para mostrar info del producto
+        const representativeSale = effectiveSales[0] ?? lead.sales[0];
+        // Valor = precio del producto * cuotas de la venta más reciente aprobada (no suma duplicados)
+        const estimatedValue = representativeSale ? Number(representativeSale.amount) : 0;
+
+        // Atribución: si la sale tiene closerId => Comercial, sino => Marketing
+        const hasCloser = !!(representativeSale?.closerId || lead.closerId);
+        const attribution = hasCloser ? 'COMERCIAL' : 'MARKETING';
+
+        // Productos de interés (formato string separado por comas o primer producto)
+        let firstProductName = 'N/A';
+        if (representativeSale?.productName) {
+          firstProductName = representativeSale.productName;
+        } else if (lead.interestedProducts.length > 0) {
+          const interestedNames = lead.interestedProducts.map((ip) => {
+            const match = projectProducts.find((p) => p.id === ip.productId);
+            return match ? match.name : ip.productId;
+          });
+          firstProductName = interestedNames.join(', ');
         }
-        historyByOrder.get(orderId)!.push({
-          id: s.id,
-          status: s.status,
-          externalTxnId: s.externalTxnId,
-          externalOrderId: s.externalOrderId,
-          productName: s.productName,
-          amount: Number(s.amount),
-          createdAt: s.createdAt.toISOString(),
-          updatedAt: s.updatedAt.toISOString(),
-          source: s.source,
-          sck: s.sck,
-          pipelineStage: s.pipelineStage,
-          pipelineSubstatus: s.pipelineSubstatus
+
+        // Agrupar historial por externalOrderId para evitar transacciones repetidas en frontend
+        const historyByOrder = new Map<string, Record<string, unknown>[]>();
+        lead.sales.forEach((s) => {
+          const orderId = s.externalOrderId || s.externalTxnId;
+          if (!orderId) return;
+          if (!historyByOrder.has(orderId)) {
+            historyByOrder.set(orderId, []);
+          }
+          historyByOrder.get(orderId)!.push({
+            id: s.id,
+            status: s.status,
+            externalTxnId: s.externalTxnId,
+            externalOrderId: s.externalOrderId,
+            productName: s.productName,
+            amount: Number(s.amount),
+            createdAt: s.createdAt.toISOString(),
+            updatedAt: s.updatedAt.toISOString(),
+            source: s.source,
+            sck: s.sck,
+            pipelineStage: s.pipelineStage,
+            pipelineSubstatus: s.pipelineSubstatus,
+          });
         });
+
+        return {
+          id: lead.id,
+          fullName: lead.name || 'Sin Nombre',
+          email: lead.email,
+          phone: lead.phone || '',
+          stageId: lead.pipelineStage || 'uncontacted',
+          situacion: lead.situacion,
+          lastContact: lead.updatedAt.toISOString(),
+          estimatedValue,
+          productName: representativeSale?.productName || firstProductName,
+          productId: representativeSale?.productId || undefined,
+          closerId: representativeSale?.closerId || lead.closerId || undefined,
+          source: representativeSale?.source || 'MANUAL',
+          installments: representativeSale?.installments || 1,
+          offerCode: representativeSale?.offerCode || undefined,
+          attribution,
+          interestedProducts: lead.interestedProducts.map((ip) => {
+            const match = projectProducts.find((p) => p.id === ip.productId);
+            return match ? match.name : ip.productId;
+          }),
+          latestTransaction: representativeSale
+            ? {
+                id: representativeSale.id,
+                status: representativeSale.status,
+                externalTxnId: representativeSale.externalTxnId,
+                externalOrderId: representativeSale.externalOrderId,
+                createdAt: representativeSale.createdAt.toISOString(),
+                paymentMethod: representativeSale.paymentMethod,
+                productName: representativeSale.productName,
+                amount: Number(representativeSale.amount),
+                currency: representativeSale.currency,
+                installments: representativeSale.installments,
+                offerCode: representativeSale.offerCode,
+                sck: representativeSale.sck,
+                closerId: representativeSale.closerId || lead.closerId || null,
+                metadata: representativeSale.metadata,
+                source: representativeSale.source,
+                attribution,
+                pipelineStage: representativeSale.pipelineStage,
+                pipelineSubstatus: representativeSale.pipelineSubstatus,
+                lead: {
+                  name: lead.name,
+                  email: lead.email,
+                  phone: lead.phone,
+                },
+                history: Array.from(historyByOrder.entries()).map(([orderId, txns]) => ({
+                  orderId,
+                  transactions: txns,
+                })),
+              }
+            : null,
+        };
       });
 
       return {
-        id: lead.id,
-        fullName: lead.name || 'Sin Nombre',
-        email: lead.email,
-        phone: lead.phone || '',
-        stageId: lead.pipelineStage || 'uncontacted',
-        situacion: lead.situacion,
-        lastContact: lead.updatedAt.toISOString(),
-        estimatedValue,
-        productName: representativeSale?.productName || firstProductName,
-        productId: representativeSale?.productId || undefined,
-        closerId: representativeSale?.closerId || lead.closerId || undefined,
-        source: representativeSale?.source || 'MANUAL',
-        installments: representativeSale?.installments || 1,
-        offerCode: representativeSale?.offerCode || undefined,
-        attribution,
-        interestedProducts: lead.interestedProducts.map(ip => {
-          const match = projectProducts.find(p => p.id === ip.productId);
-          return match ? match.name : ip.productId;
-        }),
-        latestTransaction: representativeSale ? {
-          id: representativeSale.id,
-          status: representativeSale.status,
-          externalTxnId: representativeSale.externalTxnId,
-          externalOrderId: representativeSale.externalOrderId,
-          createdAt: representativeSale.createdAt.toISOString(),
-          paymentMethod: representativeSale.paymentMethod,
-          productName: representativeSale.productName,
-          amount: Number(representativeSale.amount),
-          currency: representativeSale.currency,
-          installments: representativeSale.installments,
-          offerCode: representativeSale.offerCode,
-          sck: representativeSale.sck,
-          closerId: representativeSale.closerId || lead.closerId || null,
-          metadata: representativeSale.metadata,
-          source: representativeSale.source,
-          attribution,
-          pipelineStage: representativeSale.pipelineStage,
-          pipelineSubstatus: representativeSale.pipelineSubstatus,
-          lead: {
-            name: lead.name,
-            email: lead.email,
-            phone: lead.phone
-          },
-          // Pasamos el history agrupado
-          history: Array.from(historyByOrder.entries()).map(([orderId, txns]) => ({
-            orderId,
-            transactions: txns
-          }))
-        } : null
+        items: enriched,
+        total,
+        pageInfo: {
+          hasNextPage: hasNext,
+          hasPreviousPage: !!filters.cursor,
+          startCursor: rawItems.length > 0 ? encodeCursor(rawItems[0]!.updatedAt, rawItems[0]!.id) : null,
+          endCursor: rawItems.length > 0 ? encodeCursor(rawItems[rawItems.length - 1]!.updatedAt, rawItems[rawItems.length - 1]!.id) : null,
+        },
       };
-    });
+    } catch (err) {
+      this.logger.error(`Error loading leads for project ${projectId}`, err);
+      return emptyResponse;
+    }
   }
 
   /**
@@ -1351,6 +1508,11 @@ export class SalesService implements OnModuleInit {
       this.commissionService.reconcileCloserCommissions(projectId, sale.closerId, sale.createdAt || new Date()).catch(e => {
         this.logger.error(`Error recalculating commissions:`, e);
       });
+    } else {
+      // Sin closer (marketing): refrescar métricas directo, p. ej. tras un REEMBOLSO
+      this.commissionService.refreshMetricsViews().catch(e => {
+        this.logger.error(`Error refrescando métricas tras cambio de estado:`, e);
+      });
     }
 
     return { success: true };
@@ -1474,7 +1636,7 @@ export class SalesService implements OnModuleInit {
 
   async importSaleCsv(projectId: string, dto: CsvSaleImportDto, requestedBy: string) {
     // ── Resolución de closerId (fuera de la transacción para evitar abortos) ──
-    let closerId: string | null = null;
+    let sckCloserId: string | null = null;
     
     // 1. Buscar por código SCK (si el string enviado contiene alguno de los sckCodes del usuario)
     if (dto.sck && dto.sck !== '(none)' && dto.sck !== 'null') {
@@ -1485,7 +1647,7 @@ export class SalesService implements OnModuleInit {
         const normalizedSck = dto.sck.toLowerCase();
         for (const closer of allClosers) {
           if (closer.sckCodes.some(code => normalizedSck.includes(code.toLowerCase()))) {
-            closerId = closer.userId;
+            sckCloserId = closer.userId;
             break;
           }
         }
@@ -1494,28 +1656,11 @@ export class SalesService implements OnModuleInit {
       }
     }
 
-    // 2. Si no encontró por SCK, buscar por nombre de afiliado
-    if (!closerId && dto.affiliateName && dto.affiliateName !== '(none)') {
-      try {
-        const allClosers = await this.prisma.projectUser.findMany({
-          where: { projectId, roleInProject: 'CLOSER' },
-          select: { userId: true }
-        });
-        if (allClosers.length > 0) {
-          const userIds = allClosers.map(c => c.userId);
-          const users = await this.prisma.user.findMany({
-            where: { id: { in: userIds } }
-          });
-          const normalizedAffiliate = dto.affiliateName.toLowerCase().trim();
-          const matchedUser = users.find(u => u.fullName.toLowerCase().includes(normalizedAffiliate));
-          if (matchedUser) {
-            closerId = matchedUser.id;
-          }
-        }
-      } catch {
-        // Ignorar
-      }
-    }
+    const { closerId, attribution } = resolveAttribution({
+      sckCloserId,
+      sckIsFixedCommercial: isFixedCommercialSck(dto.sck),
+      affiliateIsComercial: isCommercialAffiliateName(dto.affiliateName),
+    });
 
     // 2. Determinar etapa en pipeline para esta transacción
     const situacion = this.determineSituacion(dto.status);
@@ -1647,12 +1792,13 @@ export class SalesService implements OnModuleInit {
             status: normalizeSaleStatus(dto.status),
             amount: dto.amount && dto.amount > 0 ? dto.amount : matchingSale.amount,
             productName: finalProductName,
-            closerId: closerId ?? matchingSale.closerId ?? lead.closerId,
+            closerId,
             externalOrderId: orderId,
             externalTxnId: dto.externalTxnId,
             pipelineStage,
             metadata: {
               ...((matchingSale.metadata as object) || {}),
+              attribution,
               history: updatedHistory
             }
           }
@@ -1669,7 +1815,7 @@ export class SalesService implements OnModuleInit {
             externalTxnId: dto.externalTxnId,
             productName: finalProductName,
             status: normalizeSaleStatus(dto.status),
-            closerId: closerId ?? ((dto.sck && isFixedCommercialSck(dto.sck)) || (dto.affiliateName && normalizeSck(dto.affiliateName).match(/reynald|diego|dh/)) ? lead.closerId : null) ?? null,
+            closerId,
             amount: finalAmount,
             currency: finalCurrency,
             createdAt: saleDate,
@@ -1679,6 +1825,7 @@ export class SalesService implements OnModuleInit {
             installments: finalInstallments,
             pipelineStage,
             metadata: { 
+              attribution,
               history: [this.buildHistoryEvent('STATUS_CHANGE', { status: normalizeSaleStatus(dto.status), timestamp: saleDate })],
               isFirstInstallment: dto.isFirstInstallment
             }

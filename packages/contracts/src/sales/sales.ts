@@ -144,3 +144,32 @@ export const UpdateTransactionStatusSchema = z.object({
 });
 
 export type UpdateTransactionStatusDto = z.infer<typeof UpdateTransactionStatusSchema>;
+
+export const OriginFilterEnum = z.enum(['marketing', 'comercial', 'todos']);
+
+export const ListFiltersSchema = z.object({
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  origin: OriginFilterEnum.default('todos'),
+  productId: z.string().optional(),
+  closerId: z.string().uuid().optional(),
+  status: z.string().optional(),
+  search: z.string().optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export type ListFilters = z.infer<typeof ListFiltersSchema>;
+
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  pageInfo: {
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string | null;
+    endCursor: string | null;
+  };
+}
+

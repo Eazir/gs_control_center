@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { fetchWithAuth } from '@/lib/api-client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -90,17 +91,29 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<PeriodValue>('30');
+  const [day, setDay] = useState<string>('');
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [metricMode, setMetricMode] = useState<'ventas' | 'fact'>('ventas');
   const [breakdownType, setBreakdownType] = useState<'closer' | 'prod' | 'acc'>(
     isCliente ? 'prod' : 'closer'
   );
 
-  async function loadData(nextPeriod: PeriodValue) {
+  async function loadData(nextPeriod: PeriodValue, nextDay?: string, nextFrom?: string, nextTo?: string) {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetchWithAuth(`/kpi/project/${projectId}/dashboard?period=${nextPeriod}`);
+      const params = new URLSearchParams();
+      if (nextDay) {
+        params.set('day', nextDay);
+      } else if (nextFrom || nextTo) {
+        if (nextFrom) params.set('from', nextFrom);
+        if (nextTo) params.set('to', nextTo);
+      } else {
+        params.set('period', nextPeriod);
+      }
+      const res = await fetchWithAuth(`/kpi/project/${projectId}/dashboard?${params.toString()}`);
       if (!res.ok) throw new Error('No se pudieron cargar las métricas. Reintenta en unos segundos.');
       const json = (await res.json()) as DashboardPayload;
       setData(json);
@@ -113,10 +126,9 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
   }
 
   useEffect(() => {
-    void loadData(period);
-    // period is applied via loadData from the Select; projectId changes should refetch.
+    void loadData(period, day, fromDate, toDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, period]);
+  }, [projectId, period, day, fromDate, toDate]);
 
   if (loading && !data) {
     return (
@@ -280,26 +292,96 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
           <h1 className={styles.title}>Dashboard Comercial</h1>
           <div className={styles.sub}>Actualizado {calculatedLabel}</div>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="period-select" className="text-xs text-muted-foreground">
-            Periodo
-          </Label>
-          <Select
-            value={period}
-            onValueChange={(value) => {
-              setPeriod(value as PeriodValue);
-            }}
-          >
-            <SelectTrigger id="period-select" className="min-w-[180px]">
-              <SelectValue placeholder="Periodo" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7">Últimos 7 días</SelectItem>
-              <SelectItem value="30">Últimos 30 días</SelectItem>
-              <SelectItem value="90">Últimos 90 días</SelectItem>
-              <SelectItem value="all">Todo el tiempo</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="day-input" className="text-xs text-muted-foreground">
+              Día específico
+            </Label>
+            <Input
+              id="day-input"
+              type="date"
+              value={day}
+              onChange={(e) => {
+                setDay(e.target.value);
+                if (e.target.value) {
+                  setFromDate('');
+                  setToDate('');
+                }
+              }}
+              className="w-36 text-xs h-9 bg-background border-border"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="from-input" className="text-xs text-muted-foreground">
+              Desde
+            </Label>
+            <Input
+              id="from-input"
+              type="date"
+              value={fromDate}
+              onChange={(e) => {
+                setFromDate(e.target.value);
+                if (e.target.value) setDay('');
+              }}
+              className="w-36 text-xs h-9 bg-background border-border"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="to-input" className="text-xs text-muted-foreground">
+              Hasta
+            </Label>
+            <Input
+              id="to-input"
+              type="date"
+              value={toDate}
+              onChange={(e) => {
+                setToDate(e.target.value);
+                if (e.target.value) setDay('');
+              }}
+              className="w-36 text-xs h-9 bg-background border-border"
+            />
+          </div>
+
+          {!day && !fromDate && !toDate && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="period-select" className="text-xs text-muted-foreground">
+                Periodo
+              </Label>
+              <Select
+                value={period}
+                onValueChange={(value) => {
+                  setPeriod(value as PeriodValue);
+                }}
+              >
+                <SelectTrigger id="period-select" className="min-w-[160px] h-9 text-xs">
+                  <SelectValue placeholder="Periodo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7">Últimos 7 días</SelectItem>
+                  <SelectItem value="30">Últimos 30 días</SelectItem>
+                  <SelectItem value="90">Últimos 90 días</SelectItem>
+                  <SelectItem value="all">Todo el tiempo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {(day || fromDate || toDate) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDay('');
+                setFromDate('');
+                setToDate('');
+              }}
+              className="h-9 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Limpiar fechas
+            </Button>
+          )}
         </div>
       </header>
 

@@ -36,6 +36,7 @@ import {
   Clock,
   Sparkles,
   Lock,
+  ChevronLeft,
   ChevronRight,
   UserCheck,
   Tag,
@@ -304,6 +305,27 @@ export default function ProjectDetailsPage() {
   const [stageFilter, setStageFilter] = useState('ALL');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('ALL');
 
+  // Filtros de servidor y paginación keyset para Base de Leads
+  const [leadOriginFilter, setLeadOriginFilter] = useState<string>('todos');
+  const [leadStatusFilter, setLeadStatusFilter] = useState<string>('ALL');
+  const [leadProductFilter, setLeadProductFilter] = useState<string>('ALL');
+  const [leadDayFilter, setLeadDayFilter] = useState<string>('');
+  const [leadsCursor, setLeadsCursor] = useState<string | null>(null);
+  const [leadsCursorStack, setLeadsCursorStack] = useState<string[]>([]);
+  const [leadsPageNumber, setLeadsPageNumber] = useState<number>(1);
+  const [leadsTotal, setLeadsTotal] = useState<number>(0);
+  const [leadsPageInfo, setLeadsPageInfo] = useState<{
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string | null;
+    endCursor: string | null;
+  }>({
+    hasNextPage: false,
+    hasPreviousPage: false,
+    startCursor: null,
+    endCursor: null,
+  });
+
   // Modal para crear lead rápido
   const [isNewLeadOpen, setIsNewLeadOpen] = useState(false);
   const [newLeadName, setNewLeadName] = useState('');
@@ -442,12 +464,23 @@ export default function ProjectDetailsPage() {
     }
   }, [projectId, currentUser?.role]);
 
-  const loadLeads = useCallback(async () => {
+  const loadLeads = useCallback(async (targetCursor?: string | null) => {
     setIsLoadingLeads(true);
     if (!projectId) return;
     try {
+      const leadParams = new URLSearchParams();
+      if (leadOriginFilter && leadOriginFilter !== 'todos') leadParams.set('origin', leadOriginFilter);
+      if (leadStatusFilter && leadStatusFilter !== 'ALL') leadParams.set('status', leadStatusFilter);
+      if (leadProductFilter && leadProductFilter !== 'ALL') leadParams.set('productId', leadProductFilter);
+      if (closerFilter && closerFilter !== 'ALL' && closerFilter !== 'Por Asignar' && !isCloser) leadParams.set('closerId', closerFilter);
+      if (leadDayFilter) leadParams.set('day', leadDayFilter);
+      if (leadSearch.trim()) leadParams.set('search', leadSearch.trim());
+      const activeCursor = targetCursor !== undefined ? targetCursor : leadsCursor;
+      if (activeCursor) leadParams.set('cursor', activeCursor);
+      leadParams.set('limit', '50');
+
       const salesReq = fetchWithAuth(`/sales/project/${projectId}`);
-      const leadsReq = fetchWithAuth(`/sales/project/${projectId}/leads`);
+      const leadsReq = fetchWithAuth(`/sales/project/${projectId}/leads?${leadParams.toString()}`);
       
       const [salesRes, leadsRes] = await Promise.all([salesReq, leadsReq]);
 
@@ -456,20 +489,31 @@ export default function ProjectDetailsPage() {
         const txRes = await fetchWithAuth(`/sales/project/${projectId}/transactions`);
         if (txRes.ok) {
           const txData = await txRes.json();
-          setAllProjectTransactions(Array.isArray(txData) ? txData : []);
+          setAllProjectTransactions(Array.isArray(txData) ? txData : (txData?.items || []));
         }
       }
 
       let leadsList: any[] = [];
       if (leadsRes.ok) {
         const lData = await leadsRes.json();
-        leadsList = Array.isArray(lData) ? lData : [];
-        setBaseLeads(leadsList);
+        if (lData && typeof lData === 'object' && Array.isArray(lData.items)) {
+          leadsList = lData.items;
+          setLeadsTotal(lData.total ?? 0);
+          setLeadsPageInfo(lData.pageInfo ?? { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+        } else if (Array.isArray(lData)) {
+          leadsList = lData;
+          setLeadsTotal(lData.length);
+          setLeadsPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+        } else {
+          leadsList = [];
+          setLeadsTotal(0);
+          setLeadsPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+        }
       }
 
       if (salesRes.ok) {
         const data = await salesRes.json();
-        const sales = Array.isArray(data) ? data : [];
+        const sales = Array.isArray(data) ? data : (data?.items || []);
         const mappedOpportunities = sales.map((sale: any) => {
           const leadMatch = leadsList.find((l: any) => l.id === sale.lead?.id);
           const history = leadMatch?.latestTransaction?.history || undefined;
@@ -511,7 +555,7 @@ export default function ProjectDetailsPage() {
           phone: l.phone,
           stageId: l.stageId,
           situacion: l.situacion,
-          closerName: 'Sin Asignar', // Se resolverá al renderizar si no lo trae
+          closerName: l.closerName || 'Sin Asignar', // Se resolverá al renderizar si no lo trae
           closerId: l.closerId,
           productName: l.productName,
           estimatedValue: l.estimatedValue,
@@ -530,7 +574,37 @@ export default function ProjectDetailsPage() {
     } finally {
       setIsLoadingLeads(false);
     }
-  }, [projectId, currentUser?.role]);
+  }, [projectId, currentUser?.role, isCloser, leadOriginFilter, leadStatusFilter, leadProductFilter, closerFilter, leadDayFilter, leadSearch, leadsCursor]);
+
+  // Manejadores de paginación keyset para Base de Leads
+  const handleNextLeadsPage = () => {
+    if (!leadsPageInfo.hasNextPage || !leadsPageInfo.endCursor) return;
+    setLeadsCursorStack((prev) => [...prev, leadsCursor || '']);
+    setLeadsCursor(leadsPageInfo.endCursor);
+    setLeadsPageNumber((prev) => prev + 1);
+  };
+
+  const handlePrevLeadsPage = () => {
+    if (!leadsPageInfo.hasPreviousPage || leadsCursorStack.length === 0) return;
+    const prevCursor = leadsCursorStack[leadsCursorStack.length - 1];
+    setLeadsCursorStack((prev) => prev.slice(0, -1));
+    const nextCursor = prevCursor === '' ? null : (prevCursor || null);
+    setLeadsCursor(nextCursor);
+    setLeadsPageNumber((prev) => Math.max(1, prev - 1));
+  };
+
+  const resetLeadsFiltersAndPagination = () => {
+    setLeadOriginFilter('todos');
+    setLeadStatusFilter('ALL');
+    setLeadProductFilter('ALL');
+    setCloserFilter('ALL');
+    setStageFilter('ALL');
+    setLeadDayFilter('');
+    setLeadSearch('');
+    setLeadsCursor(null);
+    setLeadsCursorStack([]);
+    setLeadsPageNumber(1);
+  };
 
   useEffect(() => {
     loadProject();
@@ -2010,45 +2084,116 @@ export default function ProjectDetailsPage() {
         {mainView === 'leads' && (
           <div className="space-y-4 animate-in fade-in-50">
             {/* Toolbar de búsqueda y filtros */}
-            <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-card/40 p-3 rounded-xl border border-border/60">
-              <div className="relative w-full md:w-80">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
-                <Input
-                  placeholder="Buscar por nombre, email, teléfono o transacción..."
-                  value={leadSearch}
-                  onChange={(e) => setLeadSearch(e.target.value)}
-                  onFocus={(e) => e.target.select()}
-                  className="pl-9 pr-7 bg-[#0B0D13] border-border text-xs h-9"
-                />
-                {leadSearch && (
-                  <button
-                    type="button"
-                    onClick={() => setLeadSearch('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs p-0.5 rounded hover:bg-muted/30 transition-colors"
-                    title="Limpiar búsqueda"
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
+            <div className="flex flex-col gap-3 bg-card/40 p-3 rounded-xl border border-border/60">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="relative flex-1 min-w-[200px] max-w-sm">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
+                  <Input
+                    placeholder="Buscar por nombre, email, teléfono o transacción..."
+                    value={leadSearch}
+                    onChange={(e) => {
+                      setLeadSearch(e.target.value);
+                      setLeadsCursor(null);
+                      setLeadsCursorStack([]);
+                      setLeadsPageNumber(1);
+                    }}
+                    onFocus={(e) => e.target.select()}
+                    className="pl-9 pr-7 bg-[#0B0D13] border-border text-xs h-9"
+                  />
+                  {leadSearch && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLeadSearch('');
+                        setLeadsCursor(null);
+                        setLeadsCursorStack([]);
+                        setLeadsPageNumber(1);
+                      }}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs p-0.5 rounded hover:bg-muted/30 transition-colors"
+                      title="Limpiar búsqueda"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
 
-              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-                <Select value={stageFilter} onValueChange={setStageFilter}>
-                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-40">
-                    <SelectValue placeholder="Todas las Etapas" />
+                {/* Selector de Origen */}
+                <Select
+                  value={leadOriginFilter}
+                  onValueChange={(val) => {
+                    setLeadOriginFilter(val);
+                    setLeadsCursor(null);
+                    setLeadsCursorStack([]);
+                    setLeadsPageNumber(1);
+                  }}
+                >
+                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-36">
+                    <SelectValue placeholder="Origen" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ALL">Todas las Etapas</SelectItem>
-                    {pipelineStages.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
+                    <SelectItem value="todos">Todos los orígenes</SelectItem>
+                    <SelectItem value="comercial">Comercial</SelectItem>
+                    <SelectItem value="marketing">Marketing</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Selector de Estado */}
+                <Select
+                  value={leadStatusFilter}
+                  onValueChange={(val) => {
+                    setLeadStatusFilter(val);
+                    setLeadsCursor(null);
+                    setLeadsCursorStack([]);
+                    setLeadsPageNumber(1);
+                  }}
+                >
+                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-36">
+                    <SelectValue placeholder="Estado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">Todos los estados</SelectItem>
+                    <SelectItem value="APPROVED">Aprobada</SelectItem>
+                    <SelectItem value="COMPLETE">Completada</SelectItem>
+                    <SelectItem value="PENDING">Pendiente</SelectItem>
+                    <SelectItem value="REFUNDED">Reembolsada</SelectItem>
+                    <SelectItem value="CANCELED">Cancelada</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Selector de Producto */}
+                <Select
+                  value={leadProductFilter}
+                  onValueChange={(val) => {
+                    setLeadProductFilter(val);
+                    setLeadsCursor(null);
+                    setLeadsCursorStack([]);
+                    setLeadsPageNumber(1);
+                  }}
+                >
+                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-40">
+                    <SelectValue placeholder="Producto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">Todos los productos</SelectItem>
+                    {products.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
 
+                {/* Selector de Closer */}
                 {!isCloser && (
-                  <Select value={closerFilter} onValueChange={setCloserFilter}>
+                  <Select
+                    value={closerFilter}
+                    onValueChange={(val) => {
+                      setCloserFilter(val);
+                      setLeadsCursor(null);
+                      setLeadsCursorStack([]);
+                      setLeadsPageNumber(1);
+                    }}
+                  >
                     <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-40">
                       <SelectValue placeholder="Todos los Closers" />
                     </SelectTrigger>
@@ -2064,18 +2209,56 @@ export default function ProjectDetailsPage() {
                   </Select>
                 )}
 
+                {/* Selector de Día */}
+                <Input
+                  type="date"
+                  value={leadDayFilter}
+                  onChange={(e) => {
+                    setLeadDayFilter(e.target.value);
+                    setLeadsCursor(null);
+                    setLeadsCursorStack([]);
+                    setLeadsPageNumber(1);
+                  }}
+                  className="w-36 h-9 text-xs bg-[#0B0D13] border-border"
+                />
+
+                {/* Selector de Etapa */}
+                <Select value={stageFilter} onValueChange={setStageFilter}>
+                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-36">
+                    <SelectValue placeholder="Todas las Etapas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">Todas las Etapas</SelectItem>
+                    {pipelineStages.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => loadLeads()}
+                  onClick={() => loadLeads(leadsCursor)}
                   disabled={isLoadingLeads}
                   className="text-xs h-9 border-border text-foreground hover:bg-muted"
                 >
                   <RefreshCw size={13} className={`mr-1 ${isLoadingLeads ? 'animate-spin' : ''}`} />
                   Refrescar
                 </Button>
-                {/* Importación masiva: la ingesta de datos es gerencial. El CLOSER solo
-                    administra los leads que ya tiene asignados, nunca carga lotes nuevos. */}
+
+                {(leadOriginFilter !== 'todos' || leadStatusFilter !== 'ALL' || leadProductFilter !== 'ALL' || closerFilter !== 'ALL' || stageFilter !== 'ALL' || !!leadDayFilter || !!leadSearch) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={resetLeadsFiltersAndPagination}
+                    className="text-xs h-9 text-muted-foreground hover:text-foreground"
+                  >
+                    Limpiar filtros
+                  </Button>
+                )}
+
                 {!isCloser && (
                   <Button
                     variant="outline"
@@ -2101,6 +2284,38 @@ export default function ProjectDetailsPage() {
 
             {/* TABLA DE LEADS */}
             <div className="rounded-xl border border-border overflow-hidden bg-[#0B0D13]">
+              {/* CONTADOR Y PAGINACIÓN AL INICIO DE LA TABLA (ENCIMA DE <Table>) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-2.5 bg-muted/10 border-b border-border">
+                <div className="text-xs text-muted-foreground font-medium">
+                  Total de leads: <span className="font-bold text-foreground font-mono">{leadsTotal}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground mr-1">
+                    Página <span className="font-semibold text-foreground">{leadsPageNumber}</span>
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrevLeadsPage}
+                    disabled={!leadsPageInfo.hasPreviousPage || leadsCursorStack.length === 0 || isLoadingLeads}
+                    className="h-7 px-2.5 text-xs flex items-center gap-1"
+                  >
+                    <ChevronLeft size={13} />
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleNextLeadsPage}
+                    disabled={!leadsPageInfo.hasNextPage || !leadsPageInfo.endCursor || isLoadingLeads}
+                    className="h-7 px-2.5 text-xs flex items-center gap-1"
+                  >
+                    Siguiente
+                    <ChevronRight size={13} />
+                  </Button>
+                </div>
+              </div>
+
               <Table>
                 <TableHeader className="bg-card/60">
                   <TableRow className="border-border/60">
@@ -2114,14 +2329,22 @@ export default function ProjectDetailsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {paginatedLeads.length === 0 ? (
+                  {isLoadingLeads ? (
+                    Array.from({ length: 4 }).map((_, i) => (
+                      <TableRow key={i} className="border-border/40">
+                        <TableCell colSpan={7} className="py-4">
+                          <div className="h-6 bg-muted/40 rounded animate-pulse w-full" />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : enrichedBaseLeads.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-xs text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center py-12 text-xs text-muted-foreground">
                         No se encontraron prospectos con los filtros actuales.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    paginatedLeads.map((lead) => {
+                    enrichedBaseLeads.map((lead) => {
                       const stageObj = pipelineStages.find((s) => s.id === lead.stageId);
                       const cleanPhone = lead.phone.replace(/[^0-9]/g, '');
 
@@ -2191,38 +2414,6 @@ export default function ProjectDetailsPage() {
                 </TableBody>
               </Table>
             </div>
-            
-            {/* Controles de Paginación */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between bg-[#0B0D13] p-3 rounded-xl border border-border">
-                <span className="text-xs text-muted-foreground">
-                  Mostrando {((leadsPage - 1) * 50) + 1} a {Math.min(leadsPage * 50, filteredBaseLeads.length)} de {filteredBaseLeads.length} leads
-                </span>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setLeadsPage(p => Math.max(1, p - 1))}
-                    disabled={leadsPage === 1}
-                    className="h-8 text-xs"
-                  >
-                    Anterior
-                  </Button>
-                  <span className="text-xs font-bold px-2">
-                    Página {leadsPage} de {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setLeadsPage(p => Math.min(totalPages, p + 1))}
-                    disabled={leadsPage === totalPages}
-                    className="h-8 text-xs"
-                  >
-                    Siguiente
-                  </Button>
-                </div>
-              </div>
-            )}
           </div>
         )}
 

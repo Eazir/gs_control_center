@@ -11,6 +11,8 @@
 - Antes de iniciar una feature se actualiza este plan; `instructions.md`, `tests.md` y `correcciones.md`
   se reescriben para esa fase.
 - No se avanza de fase sin visto bueno en `correcciones.md` y `make check` en verde.
+- Tras el visto bueno de `correcciones.md`, **Opencode reconstruye los contenedores `api` y `web`** para que
+  David revise los cambios sobre la plataforma antes de cerrar la fase.
 - **Fronteras innegociables (AGENTS.md):** un módulo solo consulta su propio schema; cero FKs físicas entre
   schemas; `any` prohibido; `withRls` para RLS; DataLoader en toda relación; `prisma.$transaction` en
   escrituras multi-tabla; **paginación keyset/cursor (OFFSET prohibido en listados grandes)**.
@@ -41,7 +43,7 @@
 
 ### Orden de ejecución recomendado
 
-`F0 → F3 → F1 → F2 → F4 → F5 → F6 → F7`
+`F0 → F3 → F3.1 → F1 → F2 → F4 → F5 → F6 → F7`
 
 - **F0** es un bug crítico (dashboard muestra números incorrectos) y es prerrequisito de **F2** (que lee las MVs).
 - La clasificación **comercial/marketing** (F3) alimenta el filtro de origen (F1, req 3) y los KPIs por
@@ -158,28 +160,87 @@ Contratos en `packages/contracts`.
 
 ## Fase 3 — Atribución de ventas: afiliado vs SCK (req 6)
 
-**Objetivo:** cambiar la regla de atribución del closer para que el **afiliado** tenga prioridad sobre el
-**SCK**, con la excepción de "SCK de un closer + afiliado de marketing ⇒ gana el SCK".
+**Objetivo:** definir, al entrar una transacción (manual/CSV/Hotmart), el **equipo** (`COMERCIAL`/`MARKETING`) y
+el **closer** (si aplica), con esta matriz:
 
-**Ámbito:** `core/sales/affiliation.ts` + bloque de atribución en `sales.service.ts`.
+| # | Afiliado | SCK | Equipo | Closer |
+|---|---|---|---|---|
+| 1 | Comercial | closer válido | `COMERCIAL` | el closer del SCK |
+| 2 | Comercial | no válido / fijo | `COMERCIAL` | `null` |
+| 3 | Marketing | closer válido | `COMERCIAL` | el closer del SCK |
+| 4 | Marketing | no válido / fijo | `MARKETING` | `null` |
+
+- **El closer lo determina SOLO el SCK** (cuando resuelve a un `projectUser.sckCodes` del equipo comercial).
+- **Los SCK fijos (`dh`/`diego`/`reynald`) son referenciales (de afiliados), NO de closers**: marcan equipo
+  comercial pero **nunca** asignan closer; la comisión del closer queda en la empresa.
+- El afiliado decide el equipo solo cuando el SCK no resuelve a un closer válido.
+
+**Ámbito:** `core/sales/affiliation.ts` + `sales.service.ts` (`processEvent` webhook **y** `importSaleCsv`).
 
 **Tareas:**
-- [ ] Aislar la regla en una función pura testeable (ej. `resolveAttribution({ sck, affiliates, sckOwner,
-      isMarketingAffiliate })`).
-- [ ] Implementar: afiliado (no marketing) ⇒ prioridad sobre SCK; excepción SCK-de-closer + afiliado-marketing.
-- [ ] Reemplazar la lógica dispersa (hoy en `sales.service.ts` ~líneas 303–329) por la función única.
-- [ ] Tests unitarios exhaustivos de la matriz de casos (afiliado comercial + sck ajeno; sck closer +
-      afiliado marketing; sin afiliado; afiliado marketing solo; etc.).
+- [ ] Aislar la regla en una función pura `resolveAttribution({ sckCloserId, sckIsFixedCommercial, affiliateIsComercial })`.
+- [ ] Reemplazar el bloque de atribución en `processEvent` (~líneas 331–357) por la llamada a la función.
+- [ ] **Eliminar el fallback a `lead.closerId`** en webhook (~línea 567) y en CSV (~1685/1707).
+- [ ] Aplicar la misma regla en `importSaleCsv` (quitar resolución por nombre de afiliado + usar `resolveAttribution`).
+- [ ] Tests unitarios exhaustivos de la matriz.
 
 **Terminado cuando:**
-- La matriz de casos documentada pasa en tests unitarios.
-- Una venta con afiliado comercial y SCK de otro closer se atribuye al afiliado; con SCK de closer +
-  afiliado marketing se atribuye al closer.
+- La matriz de casos pasa en tests unitarios.
+- Una venta con SCK fijo (`dh`) **no** recibe closer aunque el lead tenga uno (hoy 3 de 10 con `dh` lo heredan mal).
 - `make check` en verde.
 
 **Riesgos / dependencias:**
-- Regresión de atribución en ventas históricas: validar contra el dump de producción (no alterar ventas ya
-  procesadas salvo que se defina explícitamente un backfill).
+- Cambia `closer_id` en ventas ya procesadas con SCK fijo; evaluar backfill (no bloqueante para el conteo de MVs).
+
+---
+
+## Fase 3.1 — Backfill de atribución del histórico (re-aplicar F3 a ventas existentes)
+
+**Objetivo:** re-analizar las ventas ya existentes para que reflejen la regla F3 (atribución por SCK, **sin**
+fallback a `lead.closerId`). Corrige en particular:
+- ventas "comercial sin closer" que heredaron mal el closer del lead (SCK fijo `dh`/`diego`/`reynald` o
+  afiliado comercial sin SCK de closer); y
+- ventas importadas por CSV cuyo closer salió del **nombre de afiliado** (fallback viejo del CSV).
+
+**Ámbito:** `apps/api` (script de backfill idempotente), `core/sales/affiliation.ts` (reusa
+`resolveAttribution`), `sales.service.ts`, `commission.service.ts` (`refreshMetricsViews`).
+
+**Decisiones de alcance (confirmadas con David):**
+- Corregir `closer_id` **y** `metadata.attribution` (re-aplicar `resolveAttribution` completo a cada venta).
+- **Ventas MANUALES** quedan fuera (hoy fuera de alcance en F3).
+- Recalcular comisiones de los closers afectados: **sí**.
+
+**Tareas:**
+- [ ] Script `backfill-attribution.ts` (`tsx`) que, por venta: resuelve `sckCloserId` desde `sck` +
+      `project_users.sck_codes` (con gate `isMarketing` vía `offer_code` → `projects.projects.products`),
+      llama a `resolveAttribution`, y **reporta** (dry-run) las ventas cuyo `closer_id` difiere.
+- [ ] Modo `--apply`: actualiza `closer_id` **y** `metadata.attribution` en las ventas afectadas, idempotente,
+      `prisma.$transaction` por lote, con resumen final (X cambiadas / Y intactas).
+- [ ] Reporte dry-run desglosado por motivo: SCK fijo, afiliado comercial sin closer, CSV-por-nombre, SCK
+      resuelve a otro closer.
+- [ ] Tras aplicar: `refreshMetricsViews()` (F0) + `reconcileCloserCommissions` de los closers afectados.
+- [ ] Scripts npm: `pnpm --filter api backfill:attribution -- --dry-run` y `--apply`.
+
+**Terminado cuando:**
+- El dry-run lista el universo exacto de ventas que cambiarían (coincide con el diagnóstico: 10 con `dh`,
+  3 heredadas).
+- `--apply` corrige `closer_id` y `metadata.attribution` en esas ventas y el split
+  `closer_id IS NULL`/`IS NOT NULL` queda consistente con la regla F3.
+- Re-correr el dry-run devuelve **0 cambios** (idempotente).
+- MVs refrescadas y comisiones recalculadas.
+- `make check` en verde.
+
+**Riesgos / dependencias:**
+- Requiere **confirmación explícita de David** para ejecutar `--apply` (regla AGENTS.md: nada de escrituras
+  masivas sin confirmar).
+- La MV sigue contando "COMERCIAL sin closer" como *marketing* (`closer_id IS NULL`); corregir esa fórmula es
+  de **F2**, no del backfill.
+- El afiliado **no está guardado por venta**. Para re-etiquetar `metadata.attribution` en ventas **sin closer**
+  se necesita el afiliado; los casos por **SCK fijo** (`dh`/`diego`/`reynald`) se derivan del propio `sck`, y
+  el resto se recupera de `integrations.integration_events.payload` (match por
+  `external_order_id`/`external_txn_id`). Si no hay evento (CSV/manual), se conserva la etiqueta actual.
+- El gate `isMarketing` se recupera por `offer_code` contra `projects.projects.products`; si un producto fue
+  borrado del catálogo, replicar el fallback "legacy-history" (`isMarketing: false`).
 
 ---
 
@@ -281,11 +342,15 @@ abandonado, y que una recuperación posterior quede correctamente enlazada.
 
 ## Fase en curso
 
-- **Fase:** F0 — Higiene de métricas (bug crítico, inmediato) → luego F1 (o F3 según se confirme).
-- **Objetivo:** dejar el dashboard con métricas siempre actualizadas y, a continuación, abordar filtros/
-  paginación/contadores (F1) y la atribución (F3).
-- **Terminado cuando:** ver criterios de F0 y F1.
+- **Fase:** F1 — Filtros, paginación y contadores de listados (req 1, 3, 7, 11, 12).
+- **Objetivo:** filtros por día/origen/producto/closer/estado, paginación keyset y contador "Total de N"
+  en leads, transacciones y ventas; filtro por día en el dashboard.
+- **Terminado cuando:** ver criterios de F1. (F3.1 queda pendiente y se retoma después de F1.)
 
 ## Historial
 
-- _(pendiente)_
+- **F0 — Higiene de métricas:** ✅ APROBADO (`correcciones.md`). Refresco de MVs tras escritura +
+  `normalize-sale-status` (`PURCHASE_REFUNDED`/`REEMBOLSADO` → `REFUNDED`) + loop de 1 min.
+- **F3 — Atribución afiliado vs SCK:** ✅ APROBADO (webhook + CSV). `resolveAttribution` + eliminación del
+  fallback a `lead.closerId` en `processEvent` e `importSaleCsv`.
+- **F3.1 — Backfill de atribución:** pendiente (se retoma tras F1).
