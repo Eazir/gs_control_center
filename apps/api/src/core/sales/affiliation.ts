@@ -75,3 +75,27 @@ export function resolveAttribution(input: AttributionInput): AttributionResult {
   return { closerId: null, attribution: 'MARKETING' };
 }
 
+/**
+ * Regla de backfill: igual que resolveAttribution, pero cuando el afiliado no es
+ * recuperable (undefined) y no hay closer ni SCK fijo, conserva la etiqueta actual
+ * en lugar de forzar MARKETING.
+ */
+export function computeBackfillAttribution(input: {
+  sckCloserId: string | null;
+  sckIsFixedCommercial: boolean;
+  affiliateIsComercial: boolean | undefined;
+  currentAttribution?: Attribution | undefined;
+}): AttributionResult {
+  if (input.sckCloserId) {
+    return { closerId: input.sckCloserId, attribution: 'COMERCIAL' };
+  }
+  if (input.sckIsFixedCommercial) {
+    return { closerId: null, attribution: 'COMERCIAL' };
+  }
+  if (input.affiliateIsComercial === undefined) {
+    return { closerId: null, attribution: input.currentAttribution ?? 'MARKETING' };
+  }
+  return { closerId: null, attribution: input.affiliateIsComercial ? 'COMERCIAL' : 'MARKETING' };
+}
+
+

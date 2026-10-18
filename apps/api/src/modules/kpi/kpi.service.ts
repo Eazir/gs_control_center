@@ -5,11 +5,20 @@ import {
   buildGoalsProgress,
   findGroupForProduct,
   parseDashboardPeriod,
+  splitByOrigin,
   splitProductRevenue,
   type ProductKpiRow,
 } from './kpi-metrics.util';
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+const ORIGIN_CASE = `
+  CASE
+    WHEN metadata->>'attribution' = 'COMERCIAL' THEN 'COMERCIAL'
+    WHEN metadata->>'attribution' = 'MARKETING' THEN 'MARKETING'
+    WHEN closer_id IS NOT NULL THEN 'COMERCIAL'
+    ELSE 'MARKETING'
+  END`;
 
 export interface DashboardDateFilters {
   day?: string | undefined;
@@ -138,14 +147,45 @@ export class KpiService {
     const facturacionBruta = Number(global.facturacion_bruta || 0);
     const facturacionProxima = Number(global.facturacion_proxima || 0);
     const ventasTotales = Number(global.ventas_totales || 0);
-    const marketingVentas = Number(global.marketing_ventas || 0);
-    const marketingFacturacion = Number(global.marketing_facturacion || 0);
-    const comercialVentas = Number(global.comercial_ventas || 0);
-    const comercialFacturacion = Number(global.comercial_facturacion || 0);
     const hotmartVentas = Number(global.hotmart_ventas || 0);
     const hotmartFacturacion = Number(global.hotmart_facturacion || 0);
     const externasVentas = Number(global.externas_ventas || 0);
     const externasFacturacion = Number(global.externas_facturacion || 0);
+
+    const salesFilter = this.buildDateFilterSql('created_at::date', periodDays, options.filters, 2);
+    const salesParams: Array<string | number> = [projectId, ...salesFilter.params];
+
+    const rawOrigins = await this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+      `
+      SELECT ${ORIGIN_CASE} AS origin,
+             COUNT(*) AS ventas,
+             SUM(amount) AS facturacion
+      FROM sales.sales
+      WHERE project_id = $1::uuid
+        AND status IN ('APPROVED','PURCHASE_APPROVED','COMPLETE','PURCHASE_COMPLETE','APROBADO','COMPLETA','COMPLETO')
+        ${salesFilter.sql}
+      GROUP BY origin
+      `,
+      ...salesParams
+    );
+
+    let comercialVentas = 0;
+    let comercialFacturacion = 0;
+    let marketingVentas = 0;
+    let marketingFacturacion = 0;
+
+    for (const row of rawOrigins) {
+      const origin = String(row.origin || '');
+      const v = Number(row.ventas || 0);
+      const f = Number(row.facturacion || 0);
+      if (origin === 'COMERCIAL') {
+        comercialVentas = v;
+        comercialFacturacion = f;
+      } else if (origin === 'MARKETING') {
+        marketingVentas = v;
+        marketingFacturacion = f;
+      }
+    }
 
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
@@ -174,12 +214,33 @@ export class KpiService {
       facturacion: Number(row.facturacion || 0),
     }));
 
+    const rawOriginProducts = await this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
+      `
+      SELECT ${ORIGIN_CASE} AS origin,
+             product_name,
+             product_id,
+             COUNT(*) AS ventas,
+             SUM(amount) AS facturacion
+      FROM sales.sales
+      WHERE project_id = $1::uuid
+        AND status IN ('APPROVED','PURCHASE_APPROVED','COMPLETE','PURCHASE_COMPLETE','APROBADO','COMPLETA','COMPLETO')
+        ${salesFilter.sql}
+      GROUP BY origin, product_name, product_id
+      `,
+      ...salesParams
+    );
+
+    const originProductRows: Array<ProductKpiRow & { origin: string }> = rawOriginProducts.map((row) => ({
+      origin: String(row.origin || ''),
+      productName: String(row.product_name ?? ''),
+      productId: row.product_id ? String(row.product_id) : null,
+      ventas: Number(row.ventas || 0),
+      facturacion: Number(row.facturacion || 0),
+    }));
+
     // Bruto/Detalle del equipo comercial = SOLO ventas con closer_id (NO marketing).
     // Usamos sales.sales directamente y replicamos el FILTER de aprobado de las MVs
     // para ser consistentes con la regla reciente de normalización de estados.
-    const commercialFilter = this.buildDateFilterSql('created_at::date', periodDays, options.filters, 2);
-    const commercialParams: Array<string | number> = [projectId, ...commercialFilter.params];
-
     const rawCommercialProducts = await this.prisma.$queryRawUnsafe<Record<string, unknown>[]>(
       `
       SELECT
@@ -191,11 +252,11 @@ export class KpiService {
       WHERE project_id = $1::uuid
         AND closer_id IS NOT NULL
         AND status IN ('APPROVED','PURCHASE_APPROVED','COMPLETE','PURCHASE_COMPLETE','APROBADO','COMPLETA','COMPLETO')
-        ${commercialFilter.sql}
+        ${salesFilter.sql}
       GROUP BY product_name, product_id
       ORDER BY facturacion DESC
     `,
-      ...commercialParams
+      ...salesParams
     );
 
     const commercialProductRows: ProductKpiRow[] = rawCommercialProducts.map((row) => ({
@@ -251,12 +312,30 @@ export class KpiService {
       facturacionEquipo += split.team;
     }
 
+    let netaComercial = 0;
+    for (const row of originProductRows) {
+      const matchingGroup = findGroupForProduct(groups, row, idToName);
+      if (!matchingGroup) {
+        if (row.origin === 'COMERCIAL') {
+          netaComercial += row.facturacion;
+        }
+        continue;
+      }
+      const split = splitProductRevenue(row.facturacion, matchingGroup, 0, 0);
+      if (row.origin === 'COMERCIAL') {
+        netaComercial += split.net;
+      }
+    }
+
     if (productRows.length === 0) {
       facturacionNeta = facturacionBruta;
       facturacionEquipo = 0;
+      netaComercial = comercialFacturacion;
     } else if (commercialProductRows.length === 0) {
       facturacionEquipo = 0;
     }
+
+    const netaSplit = splitByOrigin(facturacionNeta, netaComercial);
 
     const goalsProgress = buildGoalsProgress(groups, productRows, idToName);
 
@@ -354,6 +433,18 @@ export class KpiService {
     return {
       calculatedAt: new Date().toISOString(),
       kpis,
+      origins: {
+        comercial: {
+          ventas: comercialVentas,
+          facturacionBruta: comercialFacturacion,
+          facturacionNeta: netaSplit.comercial,
+        },
+        marketing: {
+          ventas: marketingVentas,
+          facturacionBruta: marketingFacturacion,
+          facturacionNeta: netaSplit.marketing,
+        },
+      },
       salesVolumeChart,
       closersRanking,
       goalsProgress,

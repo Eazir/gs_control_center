@@ -185,3 +185,5 @@ export function findGroupForProduct(
 ): CommissionGroup | undefined {
   return groups.find((g) => g.active !== false && productMatchesGroup(row, g, idToName));
 }
+
+export { splitByOrigin } from '../../core/sales/origin-split';

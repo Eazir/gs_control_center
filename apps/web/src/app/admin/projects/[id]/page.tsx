@@ -477,7 +477,7 @@ export default function ProjectDetailsPage() {
       if (leadSearch.trim()) leadParams.set('search', leadSearch.trim());
       const activeCursor = targetCursor !== undefined ? targetCursor : leadsCursor;
       if (activeCursor) leadParams.set('cursor', activeCursor);
-      leadParams.set('limit', '50');
+      leadParams.set('limit', String(Math.max(20 * Math.max(pipelineStages.length, 1), 50)));
 
       const salesReq = fetchWithAuth(`/sales/project/${projectId}`);
       const leadsReq = fetchWithAuth(`/sales/project/${projectId}/leads?${leadParams.toString()}`);
@@ -574,7 +574,7 @@ export default function ProjectDetailsPage() {
     } finally {
       setIsLoadingLeads(false);
     }
-  }, [projectId, currentUser?.role, isCloser, leadOriginFilter, leadStatusFilter, leadProductFilter, closerFilter, leadDayFilter, leadSearch, leadsCursor]);
+  }, [projectId, currentUser?.role, isCloser, leadOriginFilter, leadStatusFilter, leadProductFilter, closerFilter, leadDayFilter, leadSearch, leadsCursor, pipelineStages.length]);
 
   // Manejadores de paginación keyset para Base de Leads
   const handleNextLeadsPage = () => {

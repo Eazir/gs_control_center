@@ -157,7 +157,7 @@ export const ListFiltersSchema = z.object({
   status: z.string().optional(),
   search: z.string().optional(),
   cursor: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(25),
+  limit: z.coerce.number().int().min(1).max(500).default(25),
 });
 
 export type ListFilters = z.infer<typeof ListFiltersSchema>;

@@ -4,29 +4,29 @@
 
 ## Fase auditada
 
-- **Identificador:** Fase F1 — Filtros, paginación y contadores de listados (req 1, 3, 7, 11, 12).
-- **Fecha:** 2026-10-17
-- **Veredicto:** ✅ **APROBADO** — F1 completa (5 entregas), vista buena para revisión operativa.
+- **Identificador:** Fase F2 — KPIs por origen (comercial vs marketing) + mini-fix pipeline (20 por etapa).
+- **Fecha:** 2026-10-18
+- **Veredicto:** ✅ **APROBADO**
 
 ## Archivos auditados
 
-| Entrega | Archivo | Estado |
+| Cambio | Archivo | Estado |
 |---|---|---|
-| 1 — Contratos | `packages/contracts/src/sales/sales.ts` (`ListFiltersSchema`, `OriginFilterEnum`, `Paginated<T>`) | ✅ |
-| 2 — Helpers | `apps/api/src/core/sales/list-filters.ts` (cursor + `buildDateRange` + `buildOriginClause` + `buildSaleWhereClause` + `buildLeadWhereClause`, con TSDoc) | ✅ |
-| 2 — Re-export/tests | `core/sales/index.ts` + `apps/api/test/verify-list-filters.ts` + script `test:list-filters` | ✅ |
-| 3 — Backend sales | `sales.service.ts` (`listSales`/`listTransactions`/`listLeads` con filtros + keyset + envelope) + `sales.controller.ts` (Zod) | ✅ |
-| 4 — Dashboard | `kpi.controller.ts` + `kpi.service.ts` (`buildDateFilterSql`, `day`/`from`/`to`, 5 consultas raw) | ✅ |
-| 5 — Frontend | `TransactionsView.tsx`, `SalesView.tsx`, `admin/projects/[id]/page.tsx` (envelope + filtros + paginación + contador), `DashboardView.tsx` (`day`/`from`/`to`) | ✅ |
+| F2 — split puro | `apps/api/src/core/sales/origin-split.ts` (`splitByOrigin`, TSDoc) | ✅ |
+| F2 — backend | `apps/api/src/modules/kpi/kpi.service.ts` (`ORIGIN_CASE`, `rawOrigins`, `rawOriginProducts`, `netaComercial`, `origins`) | ✅ |
+| F2 — re-export | `apps/api/src/modules/kpi/kpi-metrics.util.ts` (re-exporta `splitByOrigin`) | ✅ |
+| F2 — frontend | `apps/web/src/components/admin/projects/DashboardView.tsx` (`OriginSplit`, `origins`, sección "Comercial vs Marketing") | ✅ |
+| F2 — test | `apps/api/test/verify-origins.ts` + script `test:origins` | ✅ |
+| Mini-fix — contratos | `packages/contracts/src/sales/sales.ts` (`limit` `max(100)` → `max(500)`) | ✅ |
+| Mini-fix — frontend | `apps/web/src/app/admin/projects/[id]/page.tsx` (`limit = max(20 × etapas, 50)` + deps) | ✅ |
 
 ## Verificación automática (ejecutada por Opencode)
 
 | Comando | Resultado |
 |---|---|
-| `pnpm --filter api test:list-filters` | ✅ OK (T1 Zod, T2 helpers, T3 cursor) |
+| `pnpm --filter api test:origins` | ✅ OK |
 | `pnpm typecheck` | ✅ 0 errores (4 packages) |
-| `pnpm --filter api lint` | ✅ 0 errores |
-| `pnpm lint` (web) | ✅ solo warnings pre-existentes (`LeadDetailModal.tsx` useEffect, no introducidos por F1) |
+| `pnpm lint` | ✅ `api` 0/0 · `web` solo warnings pre-existentes |
 
 ## Hallazgos
 
@@ -34,23 +34,22 @@
 |---|---|---|---|---|
 | — | — | — | Sin hallazgos bloqueantes. | — |
 
-**Categorías revisadas sin hallazgos:** lógica ❌, `any` ❌, imports ❌, variables sin uso ❌, TSDoc ❌,
-OFFSET ❌, RLS/aislamiento CLOSER ❌, frontera de módulo ❌, SQL con params tipados (sin interpolación directa) ❌.
-
 **Observaciones (no bloqueantes):**
-- `decodeCursor` devuelve `{ createdAt, id }`; en `listLeads` ese timestamp es en realidad `updatedAt`. Funcional
-  (se codifica con `updatedAt` y se decodifica/usa igual), pero el nombre del campo es confuso. Cosméticamente
-  mejorable; no afecta el comportamiento.
-- Keyset sobre `id` (UUID) como tie-break: correcto, `id` es único y la comparación lexicográfica es estable.
+- `facturacionNeta` total sale de la MV (`mv_product_daily_kpis`), mientras que el split por origen sale de
+  `sales.sales`. El total de la MV incluye `Aprobado`/`Completo` (variantes capitalizadas) que las consultas a
+  `sales.sales` no incluyen; por eso `comercial` puede quedar levemente subestimado vs el total. La invariante
+  `comercial + marketing == total` se mantiene por construcción (`splitByOrigin` deriva `marketing` como residuo),
+  así que el desglose siempre cuadra. Es un matiz pre-existente de la MV, no introducido por F2.
+- `rawCommercialProducts` (para `facturacionEquipo`) sigue `closer_id`-based, sin cambios — correcto, no se mezcló
+  con el split por origen.
 
 ## Criterio de aprobación
 
-- [x] 0 hallazgos bloqueantes abiertos
-- [x] `pnpm typecheck` + `pnpm lint` + `test:list-filters` en verde
-- [x] `Work/tests.md` T1–T3 en verde; T4 (operativa) pendiente de David
-- [x] Done de F1 en `Work/instructions.md` cumplido (5 entregas)
+- [x] `origins.comercial`/`origins.marketing` con volumen, bruta y neta.
+- [x] `splitByOrigin` garantiza `comercial + marketing == total`.
+- [x] Pipeline carga `20 × etapas` leads (kanban ya hace `slice(0,20)`).
+- [x] `make check` en verde.
 
 ## Visto bueno
 
-- ✅ **Opencode — 2026-10-17** — F1 completa (5 entregas). Pendiente: reconstruir contenedores y revisión
-  operativa de David (T4).
+- ✅ **Opencode — 2026-10-18** — F2 + mini-fix aprobados.

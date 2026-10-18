@@ -342,10 +342,9 @@ abandonado, y que una recuperación posterior quede correctamente enlazada.
 
 ## Fase en curso
 
-- **Fase:** F1 — Filtros, paginación y contadores de listados (req 1, 3, 7, 11, 12).
-- **Objetivo:** filtros por día/origen/producto/closer/estado, paginación keyset y contador "Total de N"
-  en leads, transacciones y ventas; filtro por día en el dashboard.
-- **Terminado cuando:** ver criterios de F1. (F3.1 queda pendiente y se retoma después de F1.)
+- **Fase:** F2 — KPIs por origen: comercial vs marketing (req 2) *(siguiente recomendada; confirmar con David)*.
+- **Objetivo:** desglosar en el dashboard los KPIs de volumen y facturación (bruta y neta) por origen.
+- **Terminado cuando:** ver criterios de F2.
 
 ## Historial
 
@@ -353,4 +352,5 @@ abandonado, y que una recuperación posterior quede correctamente enlazada.
   `normalize-sale-status` (`PURCHASE_REFUNDED`/`REEMBOLSADO` → `REFUNDED`) + loop de 1 min.
 - **F3 — Atribución afiliado vs SCK:** ✅ APROBADO (webhook + CSV). `resolveAttribution` + eliminación del
   fallback a `lead.closerId` en `processEvent` e `importSaleCsv`.
-- **F3.1 — Backfill de atribución:** pendiente (se retoma tras F1).
+- **F1 — Filtros, paginación y contadores:** ✅ APROBADO (commit `d06ca89`).
+- **F3.1 — Backfill de atribución:** ✅ APLICADO (21 cambios: 10 `closer_id` + 11 `attribution`; idempotente, `dh` corregido).

@@ -15,6 +15,8 @@ import {
   isCommercialAffiliate,
   isCommercialAffiliateName,
   resolveAttribution,
+  computeBackfillAttribution,
+  Attribution,
   buildSaleWhereClause,
   buildLeadWhereClause,
   encodeCursor,
@@ -22,6 +24,27 @@ import {
 } from '../../core/sales';
 
 import { CommissionService } from './commission.service';
+
+export interface BackfillOptions {
+  projectId?: string;
+  apply: boolean;
+}
+
+export interface BackfillReport {
+  scanned: number;
+  changed: number;
+  byReason: { closerChanged: number; attributionChanged: number };
+  rows: Array<{
+    id: string;
+    sck: string | null;
+    oldCloserId: string | null;
+    newCloserId: string | null;
+    oldAttribution: string | null;
+    newAttribution: string;
+  }>;
+  affectedClosers: string[];
+  applied: boolean;
+}
 
 @Injectable()
 export class SalesService implements OnModuleInit {
@@ -1844,6 +1867,277 @@ export class SalesService implements OnModuleInit {
     }
 
     return resultToCast;
+  }
+
+  /**
+   * Re-analiza las ventas históricas según las reglas de atribución F3 (sin fallback al closer del lead).
+   * Corrige closerId y metadata.attribution.
+   * Si options.apply es false, opera en modo dry-run (solo lectura).
+   * Si options.apply es true, persiste los cambios por lotes, recalcula comisiones de closers afectados
+   * y refresca las vistas materializadas de métricas.
+   */
+  async backfillAttribution(options: BackfillOptions): Promise<BackfillReport> {
+    const { projectId, apply } = options;
+
+    // 1. Cargar closers por proyecto
+    const projectUsers = await this.prisma.projectUser.findMany({
+      where: {
+        roleInProject: 'CLOSER',
+        ...(projectId ? { projectId } : {}),
+      },
+      select: {
+        projectId: true,
+        userId: true,
+        sckCodes: true,
+      },
+    });
+
+    const closersByProject = new Map<string, Array<{ userId: string; sckCodes: string[] }>>();
+    for (const pu of projectUsers) {
+      const list = closersByProject.get(pu.projectId) || [];
+      list.push({ userId: pu.userId, sckCodes: pu.sckCodes ?? [] });
+      closersByProject.set(pu.projectId, list);
+    }
+
+    // 2. Cargar productos de los proyectos involucrados (para el gate isMarketing)
+    const projects = await this.prisma.project.findMany({
+      where: {
+        ...(projectId ? { id: projectId } : {}),
+      },
+      select: {
+        id: true,
+        products: true,
+      },
+    });
+
+    const productsByProject = new Map<string, Array<Record<string, unknown>>>();
+    for (const p of projects) {
+      const items = Array.isArray(p.products) ? (p.products as Array<Record<string, unknown>>) : [];
+      productsByProject.set(p.id, items);
+    }
+
+    // 3. Cargar ventas objetivo (excluyendo MANUAL)
+    const sales = await this.prisma.sale.findMany({
+      where: {
+        source: { not: 'MANUAL' },
+        ...(projectId ? { projectId } : {}),
+      },
+      select: {
+        id: true,
+        projectId: true,
+        source: true,
+        externalOrderId: true,
+        externalTxnId: true,
+        offerCode: true,
+        sck: true,
+        closerId: true,
+        metadata: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // 4. Cargar integration_events de Hotmart para recuperar afiliado cuando no hay closer ni SCK fijo
+    const integrationEvents = await this.prisma.integrationEvent.findMany({
+      where: {
+        provider: 'HOTMART',
+        ...(projectId ? { projectId } : {}),
+      },
+      select: {
+        projectId: true,
+        payload: true,
+      },
+    });
+
+    const eventAffiliateMap = new Map<string, boolean>();
+    for (const ev of integrationEvents) {
+      try {
+        const raw = HotmartAdapter.parseWebhook(ev.payload as Record<string, unknown>);
+        const isCommercial = isCommercialAffiliate(raw.affiliates);
+        if (raw.externalOrderId && raw.externalTxnId) {
+          eventAffiliateMap.set(`${ev.projectId}:${raw.externalOrderId}:${raw.externalTxnId}`, isCommercial);
+        }
+        if (raw.externalTxnId) {
+          eventAffiliateMap.set(`${ev.projectId}::${raw.externalTxnId}`, isCommercial);
+        }
+        if (raw.externalOrderId) {
+          eventAffiliateMap.set(`${ev.projectId}:${raw.externalOrderId}:`, isCommercial);
+        }
+      } catch {
+        // Ignorar payloads no válidos
+      }
+    }
+
+    // 5. Evaluar cada venta
+    const reportRows: BackfillReport['rows'] = [];
+    const changedSalesToUpdate: Array<{
+      sale: typeof sales[number];
+      newCloserId: string | null;
+      newAttribution: Attribution;
+      metadata: Record<string, unknown>;
+      oldCloserId: string | null;
+    }> = [];
+
+    let closerChangedCount = 0;
+    let attributionChangedCount = 0;
+
+    for (const sale of sales) {
+      // 5.1 Gate isMarketing
+      const products = productsByProject.get(sale.projectId) || [];
+      const matchedProduct = sale.offerCode
+        ? products.find(
+            (p) => typeof p.offerCode === 'string' && p.offerCode.toLowerCase() === sale.offerCode!.toLowerCase(),
+          )
+        : undefined;
+      const isMarketing = matchedProduct?.isMarketing === true;
+
+      // 5.2 sckCloserId
+      let sckCloserId: string | null = null;
+      if (sale.sck && sale.sck !== '(none)' && sale.sck !== 'null' && !isMarketing) {
+        const projectClosers = closersByProject.get(sale.projectId) || [];
+        const normalizedSck = sale.sck.toLowerCase();
+        for (const closer of projectClosers) {
+          const hasMatch = closer.sckCodes.some(
+            (code) => code && code.trim() !== '' && normalizedSck.includes(code.trim().toLowerCase()),
+          );
+          if (hasMatch) {
+            sckCloserId = closer.userId;
+            break;
+          }
+        }
+      }
+
+      // 5.3 SCK fijo comercial
+      const sckIsFixedCommercial = isFixedCommercialSck(sale.sck);
+
+      // 5.4 Afiliado comercial (solo si no hay closer ni SCK fijo)
+      let affiliateIsComercial: boolean | undefined = undefined;
+      if (!sckCloserId && !sckIsFixedCommercial) {
+        if (sale.externalOrderId && sale.externalTxnId) {
+          affiliateIsComercial = eventAffiliateMap.get(
+            `${sale.projectId}:${sale.externalOrderId}:${sale.externalTxnId}`,
+          );
+        }
+        if (affiliateIsComercial === undefined && sale.externalTxnId) {
+          affiliateIsComercial = eventAffiliateMap.get(`${sale.projectId}::${sale.externalTxnId}`);
+        }
+        if (affiliateIsComercial === undefined && sale.externalOrderId) {
+          affiliateIsComercial = eventAffiliateMap.get(`${sale.projectId}:${sale.externalOrderId}:`);
+        }
+      }
+
+      // 5.5 Atribución actual
+      const meta = (
+        sale.metadata && typeof sale.metadata === 'object' && !Array.isArray(sale.metadata)
+          ? (sale.metadata as Record<string, unknown>)
+          : {}
+      );
+      const rawMetaAttribution = meta.attribution;
+      let currentAttribution: Attribution;
+      if (rawMetaAttribution === 'COMERCIAL' || rawMetaAttribution === 'MARKETING') {
+        currentAttribution = rawMetaAttribution;
+      } else {
+        currentAttribution = sale.closerId ? 'COMERCIAL' : 'MARKETING';
+      }
+
+      // 5.6 Cálculo con la función pura de backfill
+      const result = computeBackfillAttribution({
+        sckCloserId,
+        sckIsFixedCommercial,
+        affiliateIsComercial,
+        currentAttribution,
+      });
+
+      const isCloserDifferent = result.closerId !== sale.closerId;
+      const isAttributionDifferent = result.attribution !== currentAttribution;
+
+      if (isCloserDifferent || isAttributionDifferent) {
+        if (isCloserDifferent) closerChangedCount++;
+        if (isAttributionDifferent) attributionChangedCount++;
+
+        reportRows.push({
+          id: sale.id,
+          sck: sale.sck,
+          oldCloserId: sale.closerId,
+          newCloserId: result.closerId,
+          oldAttribution: typeof rawMetaAttribution === 'string' ? rawMetaAttribution : currentAttribution,
+          newAttribution: result.attribution,
+        });
+
+        changedSalesToUpdate.push({
+          sale,
+          newCloserId: result.closerId,
+          newAttribution: result.attribution,
+          metadata: meta,
+          oldCloserId: sale.closerId,
+        });
+      }
+    }
+
+    // 6. Reunir closers afectados y reconciliaciones necesarias
+    const affectedCloserIds = new Set<string>();
+    const reconciliationMap = new Map<string, { projectId: string; closerId: string; monthDate: Date }>();
+
+    for (const item of changedSalesToUpdate) {
+      const d = new Date(item.sale.createdAt);
+      const monthDate = new Date(d.getFullYear(), d.getMonth(), 1);
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+      if (item.oldCloserId) {
+        affectedCloserIds.add(item.oldCloserId);
+        const key = `${item.sale.projectId}:${item.oldCloserId}:${monthKey}`;
+        reconciliationMap.set(key, { projectId: item.sale.projectId, closerId: item.oldCloserId, monthDate });
+      }
+      if (item.newCloserId) {
+        affectedCloserIds.add(item.newCloserId);
+        const key = `${item.sale.projectId}:${item.newCloserId}:${monthKey}`;
+        reconciliationMap.set(key, { projectId: item.sale.projectId, closerId: item.newCloserId, monthDate });
+      }
+    }
+
+    // 7. Si apply: true, ejecutar escrituras en lotes y reconciliaciones
+    if (apply && changedSalesToUpdate.length > 0) {
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < changedSalesToUpdate.length; i += BATCH_SIZE) {
+        const chunk = changedSalesToUpdate.slice(i, i + BATCH_SIZE);
+        await this.prisma.$transaction(
+          chunk.map(({ sale, newCloserId, newAttribution, metadata }) =>
+            this.prisma.sale.update({
+              where: { id: sale.id },
+              data: {
+                closerId: newCloserId,
+                metadata: {
+                  ...metadata,
+                  attribution: newAttribution,
+                } as Prisma.InputJsonObject,
+              },
+            }),
+          ),
+        );
+      }
+
+      for (const { projectId: pId, closerId: cId, monthDate } of reconciliationMap.values()) {
+        try {
+          await this.commissionService.reconcileCloserCommissions(pId, cId, monthDate);
+        } catch (err) {
+          this.logger.error(`Error reconciliando comisiones para closer ${cId} en proyecto ${pId}:`, err);
+        }
+      }
+
+      await this.commissionService.refreshMetricsViews();
+    }
+
+    return {
+      scanned: sales.length,
+      changed: reportRows.length,
+      byReason: {
+        closerChanged: closerChangedCount,
+        attributionChanged: attributionChangedCount,
+      },
+      rows: reportRows,
+      affectedClosers: Array.from(affectedCloserIds).sort(),
+      applied: apply,
+    };
   }
 }
 

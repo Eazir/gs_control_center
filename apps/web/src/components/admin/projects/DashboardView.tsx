@@ -56,6 +56,12 @@ interface GoalProgressItem {
   steps: GoalStepMarker[];
 }
 
+interface OriginSplit {
+  ventas: number;
+  facturacionBruta: number;
+  facturacionNeta: number;
+}
+
 interface DashboardPayload {
   calculatedAt: string;
   kpis: {
@@ -64,6 +70,10 @@ interface DashboardPayload {
     facturacionProxima: number;
     facturacionEquipo?: number;
     ventasTotales: number;
+  };
+  origins?: {
+    comercial: OriginSplit;
+    marketing: OriginSplit;
   };
   salesVolumeChart: Array<{ date: string; ventas: number; facturacion: number }>;
   closersRanking: CloserRankRow[];
@@ -173,12 +183,17 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
   const POR_INGRESAR = kpis.facturacionProxima || 0;
   const EQUIPO = kpis.facturacionEquipo;
 
+  const comOrigin = data.origins?.comercial;
+  const mkOrigin = data.origins?.marketing;
+
   const mk = comparatives.teams.find((t) => t.name === 'Marketing');
   const com = comparatives.teams.find((t) => t.name === 'Comercial');
-  const MK_V = mk?.ventas || 0;
-  const COM_V = com?.ventas || 0;
-  const MK_F = mk?.facturacion || 0;
-  const COM_F = com?.facturacion || 0;
+  const MK_V = mkOrigin ? mkOrigin.ventas : (mk?.ventas || 0);
+  const COM_V = comOrigin ? comOrigin.ventas : (com?.ventas || 0);
+  const MK_F = mkOrigin ? mkOrigin.facturacionBruta : (mk?.facturacion || 0);
+  const COM_F = comOrigin ? comOrigin.facturacionBruta : (com?.facturacion || 0);
+  const MK_NETA = mkOrigin ? mkOrigin.facturacionNeta : 0;
+  const COM_NETA = comOrigin ? comOrigin.facturacionNeta : 0;
 
   type BreakdownRow = { name: string; ventas: number; facturacion: number; sharePct?: number; barPct?: number; rank?: number };
 
@@ -579,12 +594,12 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
       </section>
 
       <section className={styles.card} style={{ marginTop: '12px' }}>
-        <h2>Marketing vs Comercial</h2>
+        <h2>Comercial vs Marketing</h2>
         {donutTotF <= 0 && donutTotV <= 0 ? (
           <p className="mt-4 text-center text-sm text-muted-foreground">No hay facturación para comparar.</p>
         ) : (
-          <div className={styles.donut}>
-            <div className="h-[220px] w-[220px]">
+          <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-center">
+            <div className="h-[220px] w-[220px] shrink-0 self-center">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -606,22 +621,58 @@ export function DashboardView({ projectId, effectiveRole }: DashboardViewProps) 
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className={styles.donutLegend}>
-              <div className={styles.lg}>
-                <i style={{ background: 'var(--gold)' }} />
-                <span>Comercial</span>
-                <b>
-                  {money(COM_F)} · {COM_V} ventas
-                </b>
-                <em>{donutTotF > 0 ? Math.round((COM_F / donutTotF) * 100) : 0}%</em>
+
+            <div className="grid flex-1 grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border border-border/60 bg-card/60 p-4">
+                <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                  <div className="flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-sm inline-block" style={{ background: 'var(--gold)' }} />
+                    <span className="font-semibold text-sm">Equipo Comercial</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    {donutTotF > 0 ? Math.round((COM_F / donutTotF) * 100) : 0}%
+                  </Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <span className="block text-[11px] text-muted-foreground">Volumen</span>
+                    <span className="text-sm font-bold">{COM_V}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-muted-foreground">Fact. Bruta</span>
+                    <span className="text-sm font-bold font-mono">{money(COM_F)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-muted-foreground">Fact. Neta</span>
+                    <span className="text-sm font-bold font-mono text-emerald-400">{money(COM_NETA)}</span>
+                  </div>
+                </div>
               </div>
-              <div className={styles.lg}>
-                <i style={{ background: 'var(--mut)' }} />
-                <span>Marketing</span>
-                <b>
-                  {money(MK_F)} · {MK_V} ventas
-                </b>
-                <em>{donutTotF > 0 ? Math.round((MK_F / donutTotF) * 100) : 0}%</em>
+
+              <div className="rounded-lg border border-border/60 bg-card/60 p-4">
+                <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                  <div className="flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-sm inline-block" style={{ background: 'var(--mut)' }} />
+                    <span className="font-semibold text-sm">Marketing</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    {donutTotF > 0 ? Math.round((MK_F / donutTotF) * 100) : 0}%
+                  </Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <span className="block text-[11px] text-muted-foreground">Volumen</span>
+                    <span className="text-sm font-bold">{MK_V}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-muted-foreground">Fact. Bruta</span>
+                    <span className="text-sm font-bold font-mono">{money(MK_F)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-muted-foreground">Fact. Neta</span>
+                    <span className="text-sm font-bold font-mono text-emerald-400">{money(MK_NETA)}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -20,6 +20,9 @@
     "test:metrics-refresh": "tsx test/verify-metrics-refresh.ts",
     "test:attribution": "tsx test/verify-attribution.ts",
     "test:list-filters": "tsx test/verify-list-filters.ts",
+    "test:backfill": "tsx test/verify-backfill.ts",
+    "test:origins": "tsx test/verify-origins.ts",
+    "backfill:attribution": "tsx scripts/backfill-attribution.ts",
     "users:list": "tsx scripts/manage-users.ts list",
     "users:invite": "tsx scripts/manage-users.ts invite"
   },
