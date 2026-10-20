@@ -36,6 +36,12 @@
 | 9 | Modificar datos de transacciones (incluida la fecha) | **F6** |
 | 10 | Encadenar la trazabilidad de transacciones manualmente | **F6** |
 | 8 | Botones de copiado instantáneos | **F7** |
+| Fix | Filtro "Por Asignar" no filtra | **F8** |
+| Fix | Filtro de etapas del pipeline no filtra | **F8** |
+| Fix | Selector de calendario + día vs rango mutuamente excluyentes | **F8** |
+| Fix | Pipeline: 20 tarjetas por etapa + total en el encabezado | **F8** |
+| Fix | Sidebar global de filtros (pipeline/leads/ventas/transacciones) | **F8** |
+| Fix | Velocidad de carga + recarga dinámica por pestaña | **F8** |
 
 > Estas fases caen dentro de las fases macro 4 (Ingesta de ventas) y 5 (KPIs/metas/comisiones) de
 > `PLAN_DE_ACCION.md`, más retoques de UX (F7) y data-entry (F5/F6). El detalle del fix de métricas está
@@ -43,7 +49,10 @@
 
 ### Orden de ejecución recomendado
 
-`F0 → F3 → F3.1 → F1 → F2 → F4 → F5 → F6 → F7`
+`F0 → F3 → F3.1 → F1 → F2 → F8 → F4 → F5 → F6 → F7`
+
+- **F8** corrige defectos de UX/rendimiento de F1/F2 que David está viendo en la plataforma (filtros que no
+  funcionan, pipeline incompleto, falta de sidebar global y lentitud). Va **antes de F4–F7** por prioridad.
 
 - **F0** es un bug crítico (dashboard muestra números incorrectos) y es prerrequisito de **F2** (que lee las MVs).
 - La clasificación **comercial/marketing** (F3) alimenta el filtro de origen (F1, req 3) y los KPIs por
@@ -340,11 +349,152 @@ abandonado, y que una recuperación posterior quede correctamente enlazada.
 
 ---
 
+## Fase 8 — Correcciones de UX: filtros globales, pipeline y rendimiento
+
+**Motivación:** seis defectos reportados por David sobre el panel del proyecto, detectados en el código.
+Se documentan las **causas raíz** para que Antigravity no tenga que re-descubrirlas.
+
+### Causas raíz (diagnóstico)
+
+| # | Ítem reportado | Causa raíz en el código |
+|---|---|---|
+| 1 | "Por Asignar" no filtra | El backend no expresa "sin closer": `ListFiltersSchema.closerId` es `uuid` puro. El frontend además usa centinelas inconsistentes: pipeline usa `"none"`, base de leads usa `"Por Asignar"`, y `loadLeads` (línea 475) **descarta** explícitamente `"Por Asignar"`. El match client-side (`filteredLeads`/`filteredBaseLeads`, líneas 1537/1571) solo compara contra `"none"`. |
+| 2 | Filtro de etapas no filtra | `stageFilter` solo existe en cliente (líneas 1538/1572); **nunca** se envía al backend en `loadLeads`. No hay filtro `stage` en el contrato ni en `buildLeadWhereClause`. |
+| 3 | Fecha con calendario + día vs rango | Backend ya soporta `from`/`to` (`buildDateRange`), pero el frontend solo manda `day` y con `<input type="date">`. No hay exclusividad día ↔ rango. |
+| 4 | Pipeline no muestra 20 por etapa + total en encabezado | El kanban lee `filteredBaseLeads` (línea 1908), que es la **página paginada** de `baseLeads` (`limit = 20×etapas` en total, repartido entre etapas), no una consulta por etapa. El badge del encabezado muestra `stageLeads.length` (lo cargado), no el total filtrado real. |
+| 5 | Filtros en sidebar global | El estado de filtros está **triplicado**: `page.tsx` (`leadOriginFilter`/`leadStatusFilter`/`leadProductFilter`/`closerFilter`/`stageFilter`/`leadDayFilter`/`leadSearch`) + `SalesView` (`originFilter`/`statusFilter`/`productFilter`/`closerFilter`/`dayFilter`/`searchTerm`) + `TransactionsView` (ídem). Cada uno con su `fetchWithAuth` y su `window.history.replaceState`. |
+| 6 | Velocidad + recarga dinámica | `loadLeads` dispara **3** endpoints (`/sales`, `/leads`, `/transactions`) en el arranque y en cada cambio de filtro (deps, línea 577). No hay caché ni invalidación: cada mutación (mover lead, crear venta, cambiar estado, importar) exige "Refrescar" manual. `SalesView`/`TransactionsView` también fetchean al montar. |
+
+### Mapa ítem → entrega
+
+| Ítem | Entrega |
+|---|---|
+| 1 (Por Asignar) + 2 (etapas) | **F8.1** (backend) |
+| 4 (pipeline 20/etapa + total) | **F8.2** (usa endpoint de F8.1) |
+| 3 (calendario) + 5 (sidebar) | **F8.3** (frontend) |
+| 6 (rendimiento) | **F8.4** (frontend) |
+
+---
+
+### F8.1 — Backend: filtros "sin asignar" y "etapa" + endpoint de pipeline
+
+**Objetivo:** dar soporte en servidor a los filtros que hoy no existen y a un endpoint de pipeline que
+devuelva, por etapa, el total filtrado y las primeras 20 tarjetas.
+
+**Ámbito:** `packages/contracts/src/sales/sales.ts` (`ListFiltersSchema`), `apps/api/src/core/sales/list-filters.ts`
+(`buildLeadWhereClause`, `buildSaleWhereClause`), `apps/api/src/modules/sales/sales.service.ts` +
+`sales.controller.ts` (`listLeads` + nuevo `listPipeline`).
+
+**Tareas:**
+- [ ] Contratos: añadir a `ListFiltersSchema` `stage: z.string().optional()` y
+      `unassigned: z.coerce.boolean().optional()`. Se mantiene `closerId` (uuid) para closer concreto.
+- [ ] `buildSaleWhereClause`: `unassigned` → `closerId: null`; `stage` → `pipelineStage: filters.stage`.
+- [ ] `buildLeadWhereClause`: `unassigned` → `AND: [{ closerId: null }, { NOT: { sales: { some: { closerId: { not: null } } } } }]`;
+      `stage` → `pipelineStage: filters.stage`. (Ambos modelos tienen `pipelineStage`, ver schema.)
+- [ ] Nuevo endpoint `GET /sales/project/:projectId/pipeline` → `{ stages: [{ stageId, name, total, items: primeros 20 }], totalLeads }`,
+      reusando `buildLeadWhereClause` (misma fuente de verdad de where). Respeta RLS/rol CLOSER. `total` por
+      etapa = conteo completo filtrado; `items` = primeras 20 por etapa (orden `createdAt DESC, id DESC`).
+- [ ] Ampliar `test/verify-list-filters.ts` con casos `unassigned` y `stage`.
+
+**Terminado cuando:**
+- `GET .../leads?unassigned=true` devuelve solo leads sin closer (y sin ventas con closer).
+- `GET .../leads?stage=won` devuelve solo leads en esa etapa.
+- `GET .../pipeline` devuelve por etapa el `total` completo y las primeras 20 tarjetas.
+- `make check` en verde.
+
+**Riesgos:**
+- Definir "sin asignar" (sin closer en el lead **y** sin ventas con closer) y documentarlo en TSDoc.
+- El endpoint de pipeline debe reusar `buildLeadWhereClause` para no desincronizar total vs tarjetas.
+
+---
+
+### F8.2 — Pipeline: 20 tarjetas por etapa + total en el encabezado
+
+**Objetivo:** que el kanban consuma el endpoint por etapa de F8.1 (no la página paginada) y muestre el total
+real de cada etapa en su encabezado, que solo cambia al aplicar un filtro.
+
+**Ámbito:** `apps/web/src/app/admin/projects/[id]/page.tsx` (render kanban ~1907–2076 y estado asociado).
+
+**Tareas:**
+- [ ] Reemplazar el origen de datos del kanban: de `filteredBaseLeads` a un nuevo estado `pipelineData`
+      (resultado de `/pipeline`).
+- [ ] Encabezado de etapa muestra `stage.total` (no `stageLeads.length`).
+- [ ] Tarjetas: render de `stage.items` (ya limitadas a 20 en backend). Eliminar `slice(0, 20)` local y el
+      "+N ocultos" basado en el conteo local; mostrar "+N prospectos ocultos" con `N = total - 20` si `total > 20`.
+- [ ] El "Total Leads" del toolbar usa `totalLeads` del endpoint (filtrado), no `filteredBaseLeads.length`.
+- [ ] El badge de la pestaña Pipeline usa el total filtrado coherente.
+
+**Terminado cuando:**
+- Cada etapa muestra hasta 20 tarjetas y su total real en el encabezado.
+- El total por etapa solo cambia al aplicar un filtro (no al paginar/scroll).
+- Al mover un lead de etapa, origen y destino actualizan sus totales vía invalidación (F8.4).
+
+---
+
+### F8.3 — Sidebar global de filtros + selector de calendario
+
+**Objetivo:** un único sidebar a la izquierda con todos los filtros, compartido entre pipeline, base de
+leads, ventas y transacciones (no en métricas), y un selector de fecha por calendario con día ↔ rango
+mutuamente excluyentes.
+
+**Ámbito:** `page.tsx`, `SalesView.tsx`, `TransactionsView.tsx`; nuevo componente `ProjectFilterSidebar`
+(+ contexto `ProjectFiltersContext` o estado liftado a `page.tsx`).
+
+**Tareas:**
+- [ ] Extraer el estado de filtros a una sola fuente. Campos: `search`, `origin`, `status`, `productId`,
+      `closer` (`ALL | UNASSIGNED | uuid`), `stage`, `day`, `from`, `to`.
+- [ ] Crear `<ProjectFilterSidebar>` a la izquierda (fuera de las pestañas), visible en
+      pipeline/leads/sales/transactions; oculto en metrics/settings.
+- [ ] Eliminar las barras de filtros de: pipeline (toolbar ~1844–1903), base de leads (~2086–2283),
+      `SalesView` y `TransactionsView` (quitar su estado local y su `window.history.replaceState`).
+- [ ] `SalesView`/`TransactionsView` pasan a recibir los filtros por props/contexto (controlados).
+- [ ] Selector de calendario (popover) en vez de `<input type="date">`; dos modos excluyentes:
+      "día específico" (`day`) y "rango" (`from`/`to`). Elegir día desactiva from/to y viceversa.
+- [ ] Sincronizar filtros a la URL (query params) en **un solo punto**, preservando compartir/enlazar.
+
+**Terminado cuando:**
+- Una sola barra lateral izquierda con todos los filtros, compartida entre las 4 pestañas.
+- Métricas NO muestra el sidebar (usa sus propios filtros).
+- El selector de fecha usa calendario; "día" desactiva desde/hasta y viceversa; los filtros persisten al
+  cambiar de pestaña y se reflejan en todas.
+
+---
+
+### F8.4 — Rendimiento: carga diferida y recarga dinámica
+
+**Objetivo:** caché por filtros, carga diferida por pestaña e invalidación tras mutaciones, para que solo
+se cargue el contenido necesario y las vistas se actualicen solas al generarse cambios.
+
+**Ámbito:** `page.tsx`, `SalesView.tsx`, `TransactionsView.tsx`, `DashboardView.tsx` (solo lo que toca).
+
+**Tareas:**
+- [ ] Sustituir los `fetchWithAuth` ad-hoc por hooks con caché (`useSWR`), keyed por `${endpoint}?${filters}`,
+      en las vistas de listado y el pipeline.
+- [ ] Carga diferida por pestaña: cada vista consulta solo al montarse (pestaña activa). Evitar que
+      `loadLeads` dispare `sales`+`leads`+`transactions` en el arranque si la pestaña activa es métricas/settings.
+- [ ] Invalidación en mutaciones: mover lead de etapa, crear lead, crear/editar venta, cambiar estado,
+      importar CSV → `mutate` de las keys afectadas (prefijo `/sales/project/:id/...`).
+- [ ] Confirmar que el cambio de pestaña y la recarga no hacen reload completo (eliminar `router.push`/
+      `window.location` para cambiar de vista si existe; ya se usa `setMainView`).
+- [ ] Tipar las estructuras intermedias del refactor (eliminar los `any` de `leadsList`, `sale`, etc.).
+
+**Terminado cuando:**
+- Cambiar de pestaña no refetchea datos ya cacheados (cache por filtros) y es perceptiblemente más rápido.
+- Tras mover un lead o crear una venta, las vistas afectadas se recargan solas (sin "Refrescar" manual).
+- El arranque del proyecto no dispara las 3 consultas si la pestaña activa es métricas.
+- `make check` en verde y sin `any` nuevo.
+
+**Riesgos:**
+- Elegir SWR (liviano, de baja fricción) frente a React Query; el proyecto ya usa REST con `fetchWithAuth`.
+- Invalidar por prefijo de key para no dejar vistas stale tras mutaciones.
+
+---
+
 ## Fase en curso
 
-- **Fase:** F2 — KPIs por origen: comercial vs marketing (req 2) *(siguiente recomendada; confirmar con David)*.
-- **Objetivo:** desglosar en el dashboard los KPIs de volumen y facturación (bruta y neta) por origen.
-- **Terminado cuando:** ver criterios de F2.
+- **Fase:** F8 — Correcciones de UX: filtros globales, pipeline y rendimiento.
+- **Objetivo:** corregir los 6 defectos de UX/rendimiento (filtros, pipeline, sidebar y velocidad).
+- **Terminado cuando:** ver criterios de F8.1–F8.4.
 
 ## Historial
 
@@ -354,3 +504,5 @@ abandonado, y que una recuperación posterior quede correctamente enlazada.
   fallback a `lead.closerId` en `processEvent` e `importSaleCsv`.
 - **F1 — Filtros, paginación y contadores:** ✅ APROBADO (commit `d06ca89`).
 - **F3.1 — Backfill de atribución:** ✅ APLICADO (21 cambios: 10 `closer_id` + 11 `attribution`; idempotente, `dh` corregido).
+- **F2 — KPIs por origen:** ✅ APROBADO (commit `74b5595`). `origins.comercial/marketing` con volumen/bruta/neta.
+- **F8 — Correcciones de UX (filtros/pipeline/sidebar/rendimiento):** 🔄 en curso.

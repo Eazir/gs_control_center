@@ -53,3 +53,36 @@
 ## Visto bueno
 
 - ✅ **Opencode — 2026-10-18** — F2 + mini-fix aprobados.
+
+---
+
+## Fase entregada por Antigravity
+
+- **Identificador:** Fase F8 — UX: Filtros Globales, Pipeline por Etapas (F8.2), Rendimiento SWR (F8.4) y Layout Fluido Colapsable (F8.5).
+- **Fecha:** 2026-10-19
+- **Estado de entrega:** Listo para auditoría de Opencode.
+
+### Archivos entregados / modificados
+
+| Subfase | Archivo | Detalle |
+|---|---|---|
+| F8.1 — Backend | `packages/contracts/src/sales/sales.ts` | `ListFiltersSchema` con `stage` y `unassigned: z.coerce.boolean()`. |
+| F8.1 — Backend | `apps/api/src/core/sales/list-filters.ts` | Soporte de `unassigned` (`closerId: null`) y `stage` (`pipelineStage`). |
+| F8.1 — Backend | `apps/api/src/modules/sales/sales.service.ts` | `listPipeline(projectId, filters, user)` agrupando por etapa + conteo total. |
+| F8.1 — Backend | `apps/api/src/modules/sales/sales.controller.ts` | Endpoint `GET /sales/project/:projectId/pipeline`. |
+| F8.1 — Tests | `apps/api/test/verify-list-filters.ts` | Pruebas T1 (schema), T2 (where clauses) y T3 (keyset) en verde. |
+| F8.2 & F8.4 — Frontend | `apps/web/src/app/admin/projects/[id]/page.tsx` | Migración completa a SWR para pipeline, leads, ventas y transacciones. Eliminación de `loadLeads` monolítico y uso de `invalidateSalesData()`. Resolución de closers vía `closerNameMap`. |
+| F8.3 — Frontend | `apps/web/src/lib/project-filters.ts` | Contrato `ProjectFilters`, `DEFAULT_FILTERS` y `buildFilterQuery`. |
+| F8.3 & F8.5 — Frontend | `apps/web/src/components/admin/projects/ProjectFilterSidebar.tsx` | Sidebar global colapsable a la izquierda (`w-64` expandido / `w-12` colapsado) persistido en `localStorage`. |
+| F8.5 — Frontend | `apps/web/src/components/layout/admin-shell.tsx` | Prop `fluid?: boolean` para padding reducido (`p-3 md:p-4`) y full-width (`w-full`). |
+
+### Verificación automática
+
+| Comando | Resultado |
+|---|---|
+| `pnpm --filter api test:list-filters` | ✅ OK |
+| `pnpm --filter api test:origins` | ✅ OK |
+| `pnpm typecheck` | ✅ 0 errores (4 packages) |
+| `pnpm lint` | ✅ 0 errores · 0 warnings en código nuevo |
+| `docker compose up -d --build --force-recreate api web` | ✅ Reconstruido y levantado con éxito (api healthy) |
+

@@ -85,9 +85,10 @@ interface AdminShellProps {
   children: React.ReactNode;
   title?: string;
   subtitle?: string;
+  fluid?: boolean;
 }
 
-export function AdminShell({ children, title, subtitle: _subtitle }: AdminShellProps) {
+export function AdminShell({ children, title, subtitle: _subtitle, fluid }: AdminShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { activeProject } = useProjectContext();
@@ -479,11 +480,11 @@ export function AdminShell({ children, title, subtitle: _subtitle }: AdminShellP
         </header>
 
         {/* CONTENIDO PRINCIPAL CON SCROLL */}
-        <main className="flex-1 overflow-y-auto p-6 md:p-8 bg-[#090A0F] relative">
+        <main className={cn("flex-1 overflow-y-auto bg-[#090A0F] relative", fluid ? "p-3 md:p-4" : "p-6 md:p-8")}>
           {/* Glow de fondo dorado tenue */}
           <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-primary/5 rounded-full blur-[140px] pointer-events-none" />
 
-          <div className="max-w-7xl mx-auto space-y-6 relative z-10">
+          <div className={cn("space-y-6 relative z-10", fluid ? "w-full" : "max-w-7xl mx-auto")}>
             {isRestrictedForRole ? (
               <div className="max-w-md mx-auto my-16 p-8 rounded-2xl bg-card border border-red-500/30 text-center space-y-4 shadow-2xl">
                 <div className="flex h-14 w-14 mx-auto items-center justify-center rounded-2xl bg-red-500/15 text-red-400">

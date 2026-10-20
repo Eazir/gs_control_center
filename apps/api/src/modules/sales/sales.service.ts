@@ -1158,108 +1158,7 @@ export class SalesService implements OnModuleInit {
       const rawItems = hasNext ? rows.slice(0, filters.limit) : rows;
       const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
 
-      const enriched = rawItems.map((lead) => {
-        const EFFECTIVE_STATUSES = ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'];
-        // El valor estimado se calcula solo sobre ventas efectivas (aprobadas)
-        const effectiveSales = lead.sales.filter((s) => EFFECTIVE_STATUSES.includes(s.status));
-        // Si hay ventas efectivas, tomar la más reciente; si no, tomar la última transacción cualquiera para mostrar info del producto
-        const representativeSale = effectiveSales[0] ?? lead.sales[0];
-        // Valor = precio del producto * cuotas de la venta más reciente aprobada (no suma duplicados)
-        const estimatedValue = representativeSale ? Number(representativeSale.amount) : 0;
-
-        // Atribución: si la sale tiene closerId => Comercial, sino => Marketing
-        const hasCloser = !!(representativeSale?.closerId || lead.closerId);
-        const attribution = hasCloser ? 'COMERCIAL' : 'MARKETING';
-
-        // Productos de interés (formato string separado por comas o primer producto)
-        let firstProductName = 'N/A';
-        if (representativeSale?.productName) {
-          firstProductName = representativeSale.productName;
-        } else if (lead.interestedProducts.length > 0) {
-          const interestedNames = lead.interestedProducts.map((ip) => {
-            const match = projectProducts.find((p) => p.id === ip.productId);
-            return match ? match.name : ip.productId;
-          });
-          firstProductName = interestedNames.join(', ');
-        }
-
-        // Agrupar historial por externalOrderId para evitar transacciones repetidas en frontend
-        const historyByOrder = new Map<string, Record<string, unknown>[]>();
-        lead.sales.forEach((s) => {
-          const orderId = s.externalOrderId || s.externalTxnId;
-          if (!orderId) return;
-          if (!historyByOrder.has(orderId)) {
-            historyByOrder.set(orderId, []);
-          }
-          historyByOrder.get(orderId)!.push({
-            id: s.id,
-            status: s.status,
-            externalTxnId: s.externalTxnId,
-            externalOrderId: s.externalOrderId,
-            productName: s.productName,
-            amount: Number(s.amount),
-            createdAt: s.createdAt.toISOString(),
-            updatedAt: s.updatedAt.toISOString(),
-            source: s.source,
-            sck: s.sck,
-            pipelineStage: s.pipelineStage,
-            pipelineSubstatus: s.pipelineSubstatus,
-          });
-        });
-
-        return {
-          id: lead.id,
-          fullName: lead.name || 'Sin Nombre',
-          email: lead.email,
-          phone: lead.phone || '',
-          stageId: lead.pipelineStage || 'uncontacted',
-          situacion: lead.situacion,
-          lastContact: lead.updatedAt.toISOString(),
-          estimatedValue,
-          productName: representativeSale?.productName || firstProductName,
-          productId: representativeSale?.productId || undefined,
-          closerId: representativeSale?.closerId || lead.closerId || undefined,
-          source: representativeSale?.source || 'MANUAL',
-          installments: representativeSale?.installments || 1,
-          offerCode: representativeSale?.offerCode || undefined,
-          attribution,
-          interestedProducts: lead.interestedProducts.map((ip) => {
-            const match = projectProducts.find((p) => p.id === ip.productId);
-            return match ? match.name : ip.productId;
-          }),
-          latestTransaction: representativeSale
-            ? {
-                id: representativeSale.id,
-                status: representativeSale.status,
-                externalTxnId: representativeSale.externalTxnId,
-                externalOrderId: representativeSale.externalOrderId,
-                createdAt: representativeSale.createdAt.toISOString(),
-                paymentMethod: representativeSale.paymentMethod,
-                productName: representativeSale.productName,
-                amount: Number(representativeSale.amount),
-                currency: representativeSale.currency,
-                installments: representativeSale.installments,
-                offerCode: representativeSale.offerCode,
-                sck: representativeSale.sck,
-                closerId: representativeSale.closerId || lead.closerId || null,
-                metadata: representativeSale.metadata,
-                source: representativeSale.source,
-                attribution,
-                pipelineStage: representativeSale.pipelineStage,
-                pipelineSubstatus: representativeSale.pipelineSubstatus,
-                lead: {
-                  name: lead.name,
-                  email: lead.email,
-                  phone: lead.phone,
-                },
-                history: Array.from(historyByOrder.entries()).map(([orderId, txns]) => ({
-                  orderId,
-                  transactions: txns,
-                })),
-              }
-            : null,
-        };
-      });
+      const enriched = rawItems.map((lead) => this.mapLeadToDto(lead, projectProducts));
 
       return {
         items: enriched,
@@ -1274,6 +1173,166 @@ export class SalesService implements OnModuleInit {
     } catch (err) {
       this.logger.error(`Error loading leads for project ${projectId}`, err);
       return emptyResponse;
+    }
+  }
+
+  /**
+   * Convierte un Lead (con sus ventas y productos de interés) al DTO de listado.
+   * Compartido entre `listLeads` y `listPipeline` para que ambos devuelvan la misma forma.
+   */
+  private mapLeadToDto(
+    lead: Prisma.LeadGetPayload<{ include: { sales: true; interestedProducts: true } }>,
+    projectProducts: Array<{ id: string; name: string }>,
+  ) {
+    const EFFECTIVE_STATUSES = ['APPROVED', 'COMPLETE', 'PURCHASE_APPROVED', 'PURCHASE_COMPLETE'];
+    // El valor estimado se calcula solo sobre ventas efectivas (aprobadas)
+    const effectiveSales = lead.sales.filter((s) => EFFECTIVE_STATUSES.includes(s.status));
+    // Si hay ventas efectivas, tomar la más reciente; si no, la última transacción para mostrar el producto.
+    const representativeSale = effectiveSales[0] ?? lead.sales[0];
+    const estimatedValue = representativeSale ? Number(representativeSale.amount) : 0;
+
+    // Atribución: si la sale tiene closerId => Comercial, sino => Marketing.
+    const hasCloser = !!(representativeSale?.closerId || lead.closerId);
+    const attribution = hasCloser ? 'COMERCIAL' : 'MARKETING';
+
+    // Productos de interés (string separado por comas o primer producto).
+    let firstProductName = 'N/A';
+    if (representativeSale?.productName) {
+      firstProductName = representativeSale.productName;
+    } else if (lead.interestedProducts.length > 0) {
+      const interestedNames = lead.interestedProducts.map((ip) => {
+        const match = projectProducts.find((p) => p.id === ip.productId);
+        return match ? match.name : ip.productId;
+      });
+      firstProductName = interestedNames.join(', ');
+    }
+
+    // Agrupar historial por externalOrderId para evitar transacciones repetidas en frontend.
+    const historyByOrder = new Map<string, Record<string, unknown>[]>();
+    lead.sales.forEach((s) => {
+      const orderId = s.externalOrderId || s.externalTxnId;
+      if (!orderId) return;
+      if (!historyByOrder.has(orderId)) {
+        historyByOrder.set(orderId, []);
+      }
+      historyByOrder.get(orderId)!.push({
+        id: s.id,
+        status: s.status,
+        externalTxnId: s.externalTxnId,
+        externalOrderId: s.externalOrderId,
+        productName: s.productName,
+        amount: Number(s.amount),
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+        source: s.source,
+        sck: s.sck,
+        pipelineStage: s.pipelineStage,
+        pipelineSubstatus: s.pipelineSubstatus,
+      });
+    });
+
+    return {
+      id: lead.id,
+      fullName: lead.name || 'Sin Nombre',
+      email: lead.email,
+      phone: lead.phone || '',
+      stageId: lead.pipelineStage || 'uncontacted',
+      situacion: lead.situacion,
+      lastContact: lead.updatedAt.toISOString(),
+      estimatedValue,
+      productName: representativeSale?.productName || firstProductName,
+      productId: representativeSale?.productId || undefined,
+      closerId: representativeSale?.closerId || lead.closerId || undefined,
+      source: representativeSale?.source || 'MANUAL',
+      installments: representativeSale?.installments || 1,
+      offerCode: representativeSale?.offerCode || undefined,
+      attribution,
+      interestedProducts: lead.interestedProducts.map((ip) => {
+        const match = projectProducts.find((p) => p.id === ip.productId);
+        return match ? match.name : ip.productId;
+      }),
+      latestTransaction: representativeSale
+        ? {
+            id: representativeSale.id,
+            status: representativeSale.status,
+            externalTxnId: representativeSale.externalTxnId,
+            externalOrderId: representativeSale.externalOrderId,
+            createdAt: representativeSale.createdAt.toISOString(),
+            paymentMethod: representativeSale.paymentMethod,
+            productName: representativeSale.productName,
+            amount: Number(representativeSale.amount),
+            currency: representativeSale.currency,
+            installments: representativeSale.installments,
+            offerCode: representativeSale.offerCode,
+            sck: representativeSale.sck,
+            closerId: representativeSale.closerId || lead.closerId || null,
+            metadata: representativeSale.metadata,
+            source: representativeSale.source,
+            attribution,
+            pipelineStage: representativeSale.pipelineStage,
+            pipelineSubstatus: representativeSale.pipelineSubstatus,
+            lead: { name: lead.name, email: lead.email, phone: lead.phone },
+            history: Array.from(historyByOrder.entries()).map(([orderId, txns]) => ({
+              orderId,
+              transactions: txns,
+            })),
+          }
+        : null,
+    };
+  }
+
+  /**
+   * Devuelve el pipeline agrupado por etapa: total filtrado por etapa y las primeras 20 tarjetas.
+   */
+  async listPipeline(
+    projectId: string,
+    filters: ListFilters,
+    user?: { id: string; role: string },
+  ) {
+    const empty = {
+      stages: [] as Array<{ stageId: string; total: number; items: unknown[] }>,
+      totalLeads: 0,
+    };
+    try {
+      if (!this.prisma || !('lead' in this.prisma)) return empty;
+
+      const whereClause = buildLeadWhereClause(projectId, filters, {
+        role: user?.role,
+        userId: user?.id,
+      });
+
+      const [totalLeads, grouped, project] = await Promise.all([
+        this.prisma.lead.count({ where: whereClause }),
+        this.prisma.lead.groupBy({
+          by: ['pipelineStage'],
+          where: whereClause,
+          _count: { _all: true },
+        }),
+        this.prisma.project.findUnique({ where: { id: projectId }, select: { products: true } }),
+      ]);
+
+      const projectProducts = (project?.products as Array<{ id: string; name: string }>) || [];
+
+      const stages: Array<{ stageId: string; total: number; items: unknown[] }> = [];
+      for (const g of grouped) {
+        const stageId = g.pipelineStage;
+        const rows = await this.prisma.lead.findMany({
+          where: { ...whereClause, pipelineStage: stageId },
+          include: { sales: { orderBy: { createdAt: 'desc' } }, interestedProducts: true },
+          orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+          take: 20,
+        });
+        stages.push({
+          stageId,
+          total: g._count._all,
+          items: rows.map((l) => this.mapLeadToDto(l, projectProducts)),
+        });
+      }
+
+      return { stages, totalLeads };
+    } catch (err) {
+      this.logger.error(`Error loading pipeline for project ${projectId}`, err);
+      return empty;
     }
   }
 

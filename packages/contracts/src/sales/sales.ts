@@ -154,6 +154,8 @@ export const ListFiltersSchema = z.object({
   origin: OriginFilterEnum.default('todos'),
   productId: z.string().optional(),
   closerId: z.string().uuid().optional(),
+  stage: z.string().optional(),
+  unassigned: z.coerce.boolean().optional(),
   status: z.string().optional(),
   search: z.string().optional(),
   cursor: z.string().optional(),

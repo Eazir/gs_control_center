@@ -125,6 +125,25 @@ function run(): void {
   assert(wLeadComboStr.includes('prod-99'), 'Lead debe incluir filtro productId en sales.some');
   assert(wLeadComboStr.includes('c2e56614-2cbf-4e78-8123-1d01242c74d1'), 'Lead debe incluir closerId');
   assert(wLeadComboStr.includes('juan'), 'Lead debe incluir search en name/email/phone/externalTxnId');
+
+  // 3. unassigned en ventas
+  const wSaleUnassigned = buildSaleWhereClause('proj-1', { ...baseFilters, unassigned: true });
+  assert(JSON.stringify(wSaleUnassigned).includes('"closerId":null'), 'Sale unassigned debe incluir closerId null');
+
+  // 4. stage en ventas
+  const wSaleStage = buildSaleWhereClause('proj-1', { ...baseFilters, stage: 'won' });
+  assert(JSON.stringify(wSaleStage).includes('won'), 'Sale stage debe incluir pipelineStage won');
+
+  // 5. unassigned en leads
+  const wLeadUnassigned = buildLeadWhereClause('proj-1', { ...baseFilters, unassigned: true });
+  const wLeadUnassignedStr = JSON.stringify(wLeadUnassigned);
+  assert(wLeadUnassignedStr.includes('"closerId":null'), 'Lead unassigned debe incluir closerId null');
+  assert(wLeadUnassignedStr.includes('"not":null'), 'Lead unassigned debe excluir sales con closer');
+
+  // 6. stage en leads
+  const wLeadStage = buildLeadWhereClause('proj-1', { ...baseFilters, stage: 'won' });
+  assert(JSON.stringify(wLeadStage).includes('won'), 'Lead stage debe incluir pipelineStage won');
+
   console.info('  ✔ T2 helpers de filtros verificados.');
 
   // ── T3: Cursor keyset ────────────────────────────────────────────────────

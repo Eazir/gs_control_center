@@ -27,6 +27,19 @@ export class SalesController {
     return this.salesService.listSales(projectId, parsed.data, { id: req.user.sub, role: req.user.role });
   }
 
+  @Get('project/:projectId/pipeline')
+  async listProjectPipeline(
+    @Param('projectId') projectId: string,
+    @Query() query: Record<string, string>,
+    @Request() req: { user: JwtPayload }
+  ) {
+    const parsed = ListFiltersSchema.safeParse(query);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.errors);
+    }
+    return this.salesService.listPipeline(projectId, parsed.data, { id: req.user.sub, role: req.user.role });
+  }
+
   @Get('project/:projectId/transactions')
   async listProjectTransactions(
     @Param('projectId') projectId: string,

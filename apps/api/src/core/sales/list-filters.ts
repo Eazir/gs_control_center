@@ -84,6 +84,8 @@ export function buildSaleWhereClause(
 
   if (filters.productId) and.push({ productId: filters.productId });
   if (filters.closerId) and.push({ closerId: filters.closerId });
+  if (filters.unassigned) and.push({ closerId: null });
+  if (filters.stage) and.push({ pipelineStage: filters.stage });
 
   const origin = buildOriginClause(filters.origin);
   if (origin) and.push(origin);
@@ -125,6 +127,18 @@ export function buildLeadWhereClause(
       ],
     });
   }
+
+  // "sin asignar": lead sin closer Y sin ventas con closer.
+  if (filters.unassigned) {
+    and.push({
+      AND: [
+        { closerId: null },
+        { NOT: { sales: { some: { closerId: { not: null } } } } },
+      ],
+    });
+  }
+
+  if (filters.stage) and.push({ pipelineStage: filters.stage });
 
   if (filters.productId) {
     and.push({ sales: { some: { productId: filters.productId } } });

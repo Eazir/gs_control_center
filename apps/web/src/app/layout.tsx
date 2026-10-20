@@ -3,10 +3,17 @@ import type { Metadata } from 'next';
 import React from 'react';
 import './globals.css';
 import { ProjectProvider } from '@/contexts/project-context';
-import { Space_Grotesk } from "next/font/google";
+import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 
-const spaceGrotesk = Space_Grotesk({subsets:['latin'],variable:'--font-sans'});
+// Fuente auto-hospedada (Space Grotesk, variable 300–700, subset latin) para no
+// depender de la red hacia fonts.gstatic.com al compilar en dev o en CI.
+const spaceGrotesk = localFont({
+  src: "./fonts/space-grotesk-latin.woff2",
+  variable: "--font-sans",
+  weight: "300 700",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: 'GrowthSell | Centro de Mando',

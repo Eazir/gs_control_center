@@ -82,6 +82,10 @@ import {
 } from '@/components/ui/dialog';
 import { fetchWithAuth } from '@/lib/api-client';
 import { getStatusBadgeClasses, getNaturalStatusName } from '@/lib/status-utils';
+import { ProjectFilters, DEFAULT_FILTERS, buildFilterQuery } from '@/lib/project-filters';
+import { jsonFetcher } from '@/lib/swr-fetcher';
+import { ProjectFilterSidebar } from '@/components/admin/projects/ProjectFilterSidebar';
+import useSWR, { useSWRConfig } from 'swr';
 import {
   ProjectSummary,
   ProductItem,
@@ -89,6 +93,7 @@ import {
   CommissionConfig,
   CommissionGroup,
   GoalsConfig,
+  SaleListItem,
 } from '@gs/contracts';
 export type ProjectProduct = ProductItem;
 
@@ -121,6 +126,17 @@ interface PipelineStageConfig {
   id: string;
   name: string;
   color: string;
+}
+
+interface PipelineBucket {
+  stageId: string;
+  total: number;
+  items: ProjectLead[];
+}
+
+interface PipelineData {
+  stages: PipelineBucket[];
+  totalLeads: number;
 }
 
 interface ProjectLead {
@@ -300,16 +316,10 @@ export default function ProjectDetailsPage() {
   const [baseLeads, setBaseLeads] = useState<ProjectLead[]>([]); // Para la Tabla (Agrupado por persona)
   const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   
-  const [leadSearch, setLeadSearch] = useState('');
-  const [closerFilter, setCloserFilter] = useState('ALL');
-  const [stageFilter, setStageFilter] = useState('ALL');
+  const [filters, setFilters] = useState<ProjectFilters>(DEFAULT_FILTERS);
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('ALL');
 
-  // Filtros de servidor y paginación keyset para Base de Leads
-  const [leadOriginFilter, setLeadOriginFilter] = useState<string>('todos');
-  const [leadStatusFilter, setLeadStatusFilter] = useState<string>('ALL');
-  const [leadProductFilter, setLeadProductFilter] = useState<string>('ALL');
-  const [leadDayFilter, setLeadDayFilter] = useState<string>('');
+  // Paginación keyset para Base de Leads
   const [leadsCursor, setLeadsCursor] = useState<string | null>(null);
   const [leadsCursorStack, setLeadsCursorStack] = useState<string[]>([]);
   const [leadsPageNumber, setLeadsPageNumber] = useState<number>(1);
@@ -431,7 +441,7 @@ export default function ProjectDetailsPage() {
         setPipelineStages(projectSettings.pipelineStages);
       }
 
-      // Los prospectos (leads) se cargan ahora mediante la API real en `loadLeads`
+      // Los prospectos (leads) se cargan ahora mediante SWR
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar el proyecto');
     } finally {
@@ -464,117 +474,140 @@ export default function ProjectDetailsPage() {
     }
   }, [projectId, currentUser?.role]);
 
-  const loadLeads = useCallback(async (targetCursor?: string | null) => {
-    setIsLoadingLeads(true);
-    if (!projectId) return;
-    try {
-      const leadParams = new URLSearchParams();
-      if (leadOriginFilter && leadOriginFilter !== 'todos') leadParams.set('origin', leadOriginFilter);
-      if (leadStatusFilter && leadStatusFilter !== 'ALL') leadParams.set('status', leadStatusFilter);
-      if (leadProductFilter && leadProductFilter !== 'ALL') leadParams.set('productId', leadProductFilter);
-      if (closerFilter && closerFilter !== 'ALL' && closerFilter !== 'Por Asignar' && !isCloser) leadParams.set('closerId', closerFilter);
-      if (leadDayFilter) leadParams.set('day', leadDayFilter);
-      if (leadSearch.trim()) leadParams.set('search', leadSearch.trim());
-      const activeCursor = targetCursor !== undefined ? targetCursor : leadsCursor;
-      if (activeCursor) leadParams.set('cursor', activeCursor);
-      leadParams.set('limit', String(Math.max(20 * Math.max(pipelineStages.length, 1), 50)));
+  // -------------------------------------------------------------
+  // PIPELINE (SWR): datos por etapa del kanban + totales filtrados.
+  // -------------------------------------------------------------
+  const { mutate: mutateSalesKeys } = useSWRConfig();
 
-      const salesReq = fetchWithAuth(`/sales/project/${projectId}`);
-      const leadsReq = fetchWithAuth(`/sales/project/${projectId}/leads?${leadParams.toString()}`);
-      
-      const [salesRes, leadsRes] = await Promise.all([salesReq, leadsReq]);
-
-      // Solo administradores o directores pueden ver las transacciones globales
-      if (currentUser?.role !== 'CLOSER') {
-        const txRes = await fetchWithAuth(`/sales/project/${projectId}/transactions`);
-        if (txRes.ok) {
-          const txData = await txRes.json();
-          setAllProjectTransactions(Array.isArray(txData) ? txData : (txData?.items || []));
-        }
-      }
-
-      let leadsList: any[] = [];
-      if (leadsRes.ok) {
-        const lData = await leadsRes.json();
-        if (lData && typeof lData === 'object' && Array.isArray(lData.items)) {
-          leadsList = lData.items;
-          setLeadsTotal(lData.total ?? 0);
-          setLeadsPageInfo(lData.pageInfo ?? { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
-        } else if (Array.isArray(lData)) {
-          leadsList = lData;
-          setLeadsTotal(lData.length);
-          setLeadsPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
-        } else {
-          leadsList = [];
-          setLeadsTotal(0);
-          setLeadsPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
-        }
-      }
-
-      if (salesRes.ok) {
-        const data = await salesRes.json();
-        const sales = Array.isArray(data) ? data : (data?.items || []);
-        const mappedOpportunities = sales.map((sale: any) => {
-          const leadMatch = leadsList.find((l: any) => l.id === sale.lead?.id);
-          const history = leadMatch?.latestTransaction?.history || undefined;
-
-          return {
-            id: sale.lead?.id || sale.id, // Kanban drag-and-drop requires lead.id to update correctly
-            leadId: sale.lead?.id,
-            fullName: sale.lead?.name || 'Sin Nombre',
-            email: sale.lead?.email || 'Sin Correo',
-            phone: sale.lead?.phone || '',
-            stageId: sale.lead?.pipelineStage || sale.pipelineStage || 'uncontacted',
-            situacion: sale.lead?.situacion || undefined,
-            interestedProducts: sale.lead?.interestedProducts || undefined,
-            pipelineSubstatus: sale.pipelineSubstatus || undefined,
-            closerName: sale.closerName || 'Sin Asignar',
-            closerId: sale.closerId || undefined,
-            productName: sale.productName,
-            estimatedValue: sale.amount,
-            source: sale.source,
-            createdAt: sale.createdAt,
-            installments: sale.installments,
-            offerCode: sale.offerCode,
-            latestTransaction: sale, // Guardamos la venta completa
-            history: history, // ¡Ahora pasamos la historia procesada desde listLeads!
-          };
-        });
-        setLeads(mappedOpportunities);
-      }
-
-      if (leadsRes.ok) {
-        // Reuse the leadsList we already parsed
-        const apiLeads = leadsList;
-        // Map backend lead response to ProjectLead type
-        const mappedLeads = apiLeads.map((l: any) => ({
-          id: l.id,
-          leadId: l.id, // For Base de Leads, id is the Lead ID
-          fullName: l.fullName,
-          email: l.email,
-          phone: l.phone,
-          stageId: l.stageId,
-          situacion: l.situacion,
-          closerName: l.closerName || 'Sin Asignar', // Se resolverá al renderizar si no lo trae
-          closerId: l.closerId,
-          productName: l.productName,
-          estimatedValue: l.estimatedValue,
-          source: l.source,
-          createdAt: l.lastContact,
-          installments: l.installments,
-          offerCode: l.offerCode,
-          latestTransaction: l.latestTransaction,
-          history: l.latestTransaction?.history, // Pasamos el historial!
-        }));
-        setBaseLeads(mappedLeads);
-      }
-    } catch {
-      setLeads([]);
-      setBaseLeads([]);
-    } finally {
-      setIsLoadingLeads(false);
+  const pipelineQuery = (() => {
+    const p = buildFilterQuery(filters);
+    if (isCloser) {
+      p.delete('closerId');
+      p.delete('unassigned');
     }
-  }, [projectId, currentUser?.role, isCloser, leadOriginFilter, leadStatusFilter, leadProductFilter, closerFilter, leadDayFilter, leadSearch, leadsCursor, pipelineStages.length]);
+    return p.toString();
+  })();
+  const pipelineKey = projectId ? `/sales/project/${projectId}/pipeline?${pipelineQuery}` : null;
+  const { data: pipelineData } = useSWR<PipelineData>(pipelineKey, jsonFetcher<PipelineData>, {
+    keepPreviousData: true,
+  });
+
+  const invalidateSalesData = useCallback(() => {
+    void mutateSalesKeys((key) => typeof key === 'string' && key.startsWith(`/sales/project/${projectId}`));
+  }, [mutateSalesKeys, projectId]);
+
+  // Resolución de nombres de closer (el endpoint /pipeline no devuelve closerName).
+  const closerNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const u of allUsers) m.set(u.id, u.fullName || u.email || u.id);
+    for (const mem of members) m.set(mem.userId, mem.userName || mem.userEmail || mem.userId);
+    return m;
+  }, [allUsers, members]);
+
+  // Datos del proyecto con SWR (caché por filtros/cursor, invalidables vía invalidateSalesData).
+  type ListPageInfo = { hasNextPage: boolean; hasPreviousPage: boolean; startCursor: string | null; endCursor: string | null };
+  interface LeadListItemDto {
+    id: string;
+    fullName: string;
+    email: string | null;
+    phone: string;
+    stageId: string;
+    situacion?: string | null;
+    lastContact: string;
+    estimatedValue: number;
+    productName: string;
+    productId?: string | null;
+    closerId?: string | null;
+    source: string;
+    installments?: number | null;
+    offerCode?: string | null;
+    latestTransaction?: Record<string, unknown> | null;
+  }
+  type LeadsListResponse = { items: LeadListItemDto[]; total: number; pageInfo: ListPageInfo };
+  type SalesListResponse = { items: SaleListItem[]; total: number; pageInfo: ListPageInfo };
+
+  const leadsQuery = buildFilterQuery(filters);
+  if (isCloser) {
+    leadsQuery.delete('closerId');
+    leadsQuery.delete('unassigned');
+  }
+  if (leadsCursor) leadsQuery.set('cursor', leadsCursor);
+  leadsQuery.set('limit', '50');
+  const leadsKey = projectId ? `/sales/project/${projectId}/leads?${leadsQuery.toString()}` : null;
+  const { data: leadsData, isLoading: leadsLoading } = useSWR<LeadsListResponse, Error>(
+    leadsKey,
+    jsonFetcher<LeadsListResponse>,
+    { keepPreviousData: true }
+  );
+
+  const salesKey = projectId ? `/sales/project/${projectId}` : null;
+  const { data: salesData } = useSWR<SalesListResponse | SaleListItem[], Error>(salesKey, jsonFetcher);
+
+  const txKey = projectId && currentUser?.role !== 'CLOSER' ? `/sales/project/${projectId}/transactions` : null;
+  const { data: txData } = useSWR<Record<string, unknown> | unknown[], Error>(txKey, jsonFetcher);
+
+  useEffect(() => {
+    setIsLoadingLeads(leadsLoading);
+  }, [leadsLoading]);
+
+  // Base de leads (tabla)
+  useEffect(() => {
+    if (!leadsData) return;
+    setLeadsTotal(leadsData.total ?? 0);
+    setLeadsPageInfo(leadsData.pageInfo ?? { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+    const mappedLeads: ProjectLead[] = (leadsData.items ?? []).map((l) => ({
+      id: l.id,
+      leadId: l.id,
+      fullName: l.fullName,
+      email: l.email ?? '',
+      phone: l.phone ?? '',
+      stageId: l.stageId ?? 'uncontacted',
+      situacion: l.situacion || undefined,
+      closerName: (l.closerId ? closerNameMap.get(l.closerId) : undefined) || 'Sin Asignar',
+      closerId: l.closerId || undefined,
+      productName: l.productName ?? '',
+      estimatedValue: l.estimatedValue ?? 0,
+      source: l.source ?? '',
+      createdAt: l.lastContact ?? '',
+      installments: l.installments || undefined,
+      offerCode: l.offerCode || undefined,
+      latestTransaction: (l.latestTransaction as unknown as TransactionData) || null,
+      history: (l.latestTransaction as { history?: unknown[] } | null)?.history,
+    }));
+    setBaseLeads(mappedLeads);
+  }, [leadsData, closerNameMap]);
+
+  // Ventas (para la métrica de "Facturación Ganada")
+  useEffect(() => {
+    if (!salesData) return;
+    const sales = Array.isArray(salesData) ? salesData : (salesData.items ?? []);
+    const mapped: ProjectLead[] = sales.map((sale) => ({
+      id: sale.lead?.id || sale.id,
+      leadId: sale.lead?.id,
+      fullName: sale.lead?.name || 'Sin Nombre',
+      email: sale.lead?.email || 'Sin Correo',
+      phone: sale.lead?.phone || '',
+      stageId: sale.pipelineStage || 'uncontacted',
+      pipelineSubstatus: sale.pipelineSubstatus || undefined,
+      closerName: sale.closerName || 'Sin Asignar',
+      closerId: sale.closerId || undefined,
+      productName: sale.productName,
+      estimatedValue: sale.amount,
+      source: sale.source,
+      createdAt: sale.createdAt,
+      installments: sale.installments || undefined,
+      offerCode: sale.offerCode || undefined,
+      latestTransaction: sale as unknown as TransactionData,
+    }));
+    setLeads(mapped);
+  }, [salesData]);
+
+  // Transacciones (para los modales de detalle)
+  useEffect(() => {
+    if (!txData) return;
+    const items = Array.isArray(txData) ? txData : (txData.items as unknown[] ?? []);
+    setAllProjectTransactions(items as TransactionData[]);
+  }, [txData]);
 
   // Manejadores de paginación keyset para Base de Leads
   const handleNextLeadsPage = () => {
@@ -594,13 +627,7 @@ export default function ProjectDetailsPage() {
   };
 
   const resetLeadsFiltersAndPagination = () => {
-    setLeadOriginFilter('todos');
-    setLeadStatusFilter('ALL');
-    setLeadProductFilter('ALL');
-    setCloserFilter('ALL');
-    setStageFilter('ALL');
-    setLeadDayFilter('');
-    setLeadSearch('');
+    setFilters(DEFAULT_FILTERS);
     setLeadsCursor(null);
     setLeadsCursorStack([]);
     setLeadsPageNumber(1);
@@ -609,8 +636,7 @@ export default function ProjectDetailsPage() {
   useEffect(() => {
     loadProject();
     loadMembersAndUsers();
-    loadLeads();
-  }, [loadProject, loadMembersAndUsers, loadLeads]);
+  }, [loadProject, loadMembersAndUsers]);
 
   // Recargar leads en lugar de guardarlos en local
   const saveLeadsState = (updatedLeads: ProjectLead[]) => {
@@ -660,10 +686,12 @@ export default function ProjectDetailsPage() {
       });
       if (!res.ok) {
         // Revertir en caso de error
-        loadLeads();
+        invalidateSalesData();
+      } else {
+        invalidateSalesData();
       }
     } catch {
-      loadLeads();
+      invalidateSalesData();
     }
   };
 
@@ -692,7 +720,7 @@ export default function ProjectDetailsPage() {
         setNewLeadName('');
         setNewLeadEmail('');
         setNewLeadPhone('');
-        loadLeads();
+        invalidateSalesData();
       } else {
         const errorMsg = 'text' in res && typeof res.text === 'function' ? await res.text().catch(() => 'Error') : 'Error';
         let parsed = errorMsg;
@@ -1446,102 +1474,6 @@ export default function ProjectDetailsPage() {
   }, [leads, members, allUsers]);
 
   // -------------------------------------------------------------
-  // MAPA DE CÓDIGOS DE TRANSACCIÓN POR LEAD
-  // -------------------------------------------------------------
-  const leadTxnCodesMap = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const tx of allProjectTransactions) {
-      const leadId = tx.lead?.id;
-      if (!leadId) continue;
-      const codes = map.get(leadId) || [];
-      if (tx.externalTxnId) codes.push(tx.externalTxnId.toLowerCase());
-      if (tx.externalOrderId) codes.push(tx.externalOrderId.toLowerCase());
-      if (tx.id) codes.push(tx.id.toLowerCase());
-      map.set(leadId, codes);
-    }
-    return map;
-  }, [allProjectTransactions]);
-
-  // Función utilitaria para evaluar si un lead coincide con la búsqueda
-  const checkLeadMatch = useCallback((l: ProjectLead, query: string): boolean => {
-    if (!query) return true;
-    const q = query.toLowerCase();
-
-    // 1. Nombre del lead
-    if (l.fullName && l.fullName.toLowerCase().includes(q)) return true;
-
-    // 2. Email
-    if (l.email && l.email.toLowerCase().includes(q)) return true;
-
-    // 3. Teléfono (texto directo y dígitos numéricos limpios)
-    if (l.phone) {
-      if (l.phone.toLowerCase().includes(q)) return true;
-      const cleanPhone = l.phone.replace(/\D/g, '');
-      const cleanQuery = q.replace(/\D/g, '');
-      if (cleanQuery.length >= 3 && cleanPhone.includes(cleanQuery)) return true;
-    }
-
-    // 4. Producto (adicional conveniente)
-    if (l.productName && l.productName.toLowerCase().includes(q)) return true;
-
-    // 5. Código de transacción
-    // 5a. Transacción más reciente (directo en el lead)
-    if (l.latestTransaction) {
-      if (l.latestTransaction.externalTxnId?.toLowerCase().includes(q)) return true;
-      if (l.latestTransaction.externalOrderId?.toLowerCase().includes(q)) return true;
-      if (l.latestTransaction.id?.toLowerCase().includes(q)) return true;
-    }
-
-    // 5b. Historial de transacciones del lead (agrupado o plano)
-    const historyList = (l.latestTransaction?.history || (l as unknown as { history?: unknown[] }).history) as unknown[];
-    if (Array.isArray(historyList)) {
-      for (const item of historyList) {
-        if (!item || typeof item !== 'object') continue;
-        const entry = item as Record<string, unknown>;
-        if (typeof entry.orderId === 'string' && entry.orderId.toLowerCase().includes(q)) return true;
-        if (typeof entry.externalTxnId === 'string' && entry.externalTxnId.toLowerCase().includes(q)) return true;
-        if (typeof entry.externalOrderId === 'string' && entry.externalOrderId.toLowerCase().includes(q)) return true;
-        if (typeof entry.id === 'string' && entry.id.toLowerCase().includes(q)) return true;
-
-        if (Array.isArray(entry.transactions)) {
-          for (const subTx of entry.transactions) {
-            if (!subTx || typeof subTx !== 'object') continue;
-            const tx = subTx as Record<string, unknown>;
-            if (typeof tx.externalTxnId === 'string' && tx.externalTxnId.toLowerCase().includes(q)) return true;
-            if (typeof tx.externalOrderId === 'string' && tx.externalOrderId.toLowerCase().includes(q)) return true;
-            if (typeof tx.id === 'string' && tx.id.toLowerCase().includes(q)) return true;
-          }
-        }
-      }
-    }
-
-    // 5c. Historial global del proyecto cruzado por Lead ID
-    const leadKey = l.id || (l as unknown as { leadId?: string }).leadId || '';
-    const codes = leadTxnCodesMap.get(leadKey) || (leadKey !== (l as unknown as { leadId?: string }).leadId ? leadTxnCodesMap.get((l as unknown as { leadId?: string }).leadId || '') : undefined);
-    if (codes && codes.some((code) => code.includes(q))) {
-      return true;
-    }
-
-    return false;
-  }, [leadTxnCodesMap]);
-
-  // -------------------------------------------------------------
-  // FILTRADO DE LEADS (PARA PIPELINE KANBAN)
-  // -------------------------------------------------------------
-  const filteredLeads = useMemo(() => {
-    const q = leadSearch.trim();
-    return enrichedLeads.filter((l) => {
-      const matchSearch = checkLeadMatch(l, q);
-      // Un CLOSER jamás filtra por closer: el backend ya le devuelve solo sus leads y el
-      // selector no está montado en su UI, así que un estado residual no debe ocultar nada.
-      const matchCloser = isCloser ? true : closerFilter === 'ALL' || (closerFilter === 'none' ? !l.closerId : (l.closerId ? l.closerId === closerFilter : l.closerName === closerFilter));
-      const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
-
-      return matchSearch && matchCloser && matchStage;
-    });
-  }, [enrichedLeads, leadSearch, closerFilter, stageFilter, checkLeadMatch, isCloser]);
-
-  // -------------------------------------------------------------
   // ENRICHMENT Y FILTRADO DE LEADS (PARA BASE DE LEADS)
   // -------------------------------------------------------------
   const enrichedBaseLeads = useMemo(() => {
@@ -1564,21 +1496,13 @@ export default function ProjectDetailsPage() {
     });
   }, [baseLeads, members, allUsers]);
 
-  const filteredBaseLeads = useMemo(() => {
-    const q = leadSearch.trim();
-    return enrichedBaseLeads.filter((l) => {
-      const matchSearch = checkLeadMatch(l, q);
-      const matchCloser = isCloser ? true : closerFilter === 'ALL' || (closerFilter === 'none' ? !l.closerId : (l.closerId ? l.closerId === closerFilter : l.closerName === closerFilter));
-      const matchStage = stageFilter === 'ALL' || l.stageId === stageFilter;
-
-      return matchSearch && matchCloser && matchStage;
-    });
-  }, [enrichedBaseLeads, leadSearch, closerFilter, stageFilter, checkLeadMatch, isCloser]);
+  // El servidor ya filtra por búsqueda/closer/etapa; aquí solo se resuelven nombres.
+  const filteredBaseLeads = enrichedBaseLeads;
 
   // Reset pagination on filter change
   useEffect(() => {
     setLeadsPage(1);
-  }, [leadSearch, closerFilter, stageFilter]);
+  }, [filters]);
 
   const paginatedLeads = useMemo(() => {
     return filteredBaseLeads.slice((leadsPage - 1) * 50, leadsPage * 50);
@@ -1671,8 +1595,8 @@ export default function ProjectDetailsPage() {
   }
 
   return (
-    <AdminShell title={`Proyecto: ${project.name}`}>
-      <div className="max-w-7xl mx-auto space-y-6 pb-12">
+    <AdminShell title={`Proyecto: ${project.name}`} fluid>
+      <div className="w-full space-y-6 pb-12">
         {/* CABECERA CON NAVEGACIÓN Y MONOGRAMA */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/60">
           <div className="flex items-center gap-3.5">
@@ -1836,67 +1760,29 @@ export default function ProjectDetailsPage() {
         </div>
 
 
+        {/* Sidebar de filtros globales (oculto en métricas/panel) + contenido de la vista */}
+        <div className="flex gap-4 items-start pt-2">
+          {['pipeline', 'leads', 'sales', 'transactions'].includes(mainView) && (
+            <ProjectFilterSidebar
+              filters={filters}
+              onChange={setFilters}
+              stages={pipelineStages}
+              closers={closersInProject.map((c) => ({ id: c.userId, name: c.userName || c.userEmail || c.userId }))}
+              products={products.map((p) => ({ id: p.id, name: p.name }))}
+              isCloser={isCloser}
+            />
+          )}
+          <div className="flex-1 min-w-0">
+
         {/* ============================================================= */}
         {/* VISTA 1: PIPELINE (KANBAN DE ETAPAS Y PROSPECTOS)             */}
         {/* ============================================================= */}
         {mainView === 'pipeline' && (
           <div className="space-y-4 animate-in fade-in-50">
-            {/* Toolbar de búsqueda y filtros del Pipeline */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-card/40 p-3 rounded-xl border border-border/60">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
-                {/* Barra de búsqueda para el pipeline */}
-                <div className="relative w-full sm:w-80">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={14} />
-                  <Input
-                    placeholder="Buscar por nombre, email, teléfono o transacción..."
-                    value={leadSearch}
-                    onChange={(e) => setLeadSearch(e.target.value)}
-                    onFocus={(e) => e.target.select()}
-                    className="pl-9 pr-7 bg-[#0B0D13] border-border text-xs h-8"
-                  />
-                  {leadSearch && (
-                    <button
-                      type="button"
-                      onClick={() => setLeadSearch('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs p-0.5 rounded hover:bg-muted/30 transition-colors"
-                      title="Limpiar búsqueda"
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-
-                {/* Filtro rápido por closer — solo gerencia: el CLOSER ya viene aislado
-                    por `closerId` desde el backend y no debe poder acotar su propio tablero. */}
-                {!isCloser && (
-                  <div className="flex items-center gap-2">
-                    <Filter size={14} className="text-primary shrink-0" />
-                    <span className="text-xs font-semibold text-foreground shrink-0">Closer:</span>
-                    <Select value={closerFilter} onValueChange={setCloserFilter}>
-                      <SelectTrigger className="bg-[#0B0D13] text-xs h-8 w-44">
-                        <SelectValue placeholder="Todos los Closers" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ALL">Todos los Closers</SelectItem>
-                        <SelectItem value="none">Sin Asignar</SelectItem>
-                        {closersInProject.map((c) => (
-                          <SelectItem key={c.id} value={c.userId}>
-                            {c.userName || c.userEmail}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                <Button variant="outline" size="sm" onClick={() => loadLeads()} className="h-8 text-xs border-border/80" disabled={isLoadingLeads}>
-                  <RefreshCw size={14} className={`mr-2 ${isLoadingLeads ? 'animate-spin' : ''}`} />
-                  Refrescar
-                </Button>
-              </div>
-
-              <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
-                <span>Total Leads: <strong className="text-foreground">{filteredBaseLeads.length}</strong></span>
+            {/* Resumen del pipeline (los filtros viven en el sidebar izquierdo) */}
+            <div className="flex items-center justify-between gap-3 bg-card/40 p-3 rounded-xl border border-border/60">
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span>Total Leads: <strong className="text-foreground">{pipelineData?.totalLeads ?? 0}</strong></span>
                 <span>•</span>
                 <span>Facturación Ganada: <strong className="text-emerald-400 font-mono">${metricsCalc.totalWon.toLocaleString()} USD</strong></span>
               </div>
@@ -1905,7 +1791,8 @@ export default function ProjectDetailsPage() {
             {/* TABLERO KANBAN DE ETAPAS */}
             <div className="flex flex-nowrap items-start gap-4 overflow-x-auto pb-6 pt-2 custom-scrollbar">
               {pipelineStages.map((stage) => {
-                let stageLeads = filteredBaseLeads.filter((l) => l.stageId === stage.id);
+                const bucket = pipelineData?.stages.find((b) => b.stageId === stage.id);
+                let stageLeads = bucket?.items ?? [];
                 
                 // Aplicar el filtro de cuotas SOLO en la etapa "Ganado"
                 if (stage.id === 'won' && paymentMethodFilter !== 'ALL') {
@@ -1946,7 +1833,7 @@ export default function ProjectDetailsPage() {
                             </Select>
                           )}
                           <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
-                            {stageLeads.length}
+                            {bucket?.total ?? 0}
                           </Badge>
                         </div>
                       </div>
@@ -1963,7 +1850,7 @@ export default function ProjectDetailsPage() {
                         </div>
                       ) : (
                         <>
-                          {stageLeads.slice(0, 20).map((lead) => {
+                          {stageLeads.map((lead) => {
                           const cleanPhone = lead.phone.replace(/[^0-9]/g, '');
                           return (
                             <div
@@ -2029,7 +1916,7 @@ export default function ProjectDetailsPage() {
 
                                 <div className="flex items-center gap-1.5 text-[11px] px-1.5">
                                   <User size={10} className="text-muted-foreground" />
-                                  <span className="text-muted-foreground font-medium truncate">{lead.closerName || 'Sin closer'}</span>
+                                  <span className="text-muted-foreground font-medium truncate">{lead.closerName || closerNameMap.get(lead.closerId || '') || 'Sin closer'}</span>
                                 </div>
                               </div>
 
@@ -2063,9 +1950,9 @@ export default function ProjectDetailsPage() {
                             </div>
                           );
                         })}
-                        {stageLeads.length > (leadSearch ? 100 : 20) && (
+                        {bucket && bucket.total > stageLeads.length && (
                           <div className="text-center py-2 text-[11px] font-bold text-muted-foreground bg-muted/20 rounded-xl border border-border/50">
-                            + {stageLeads.length - (leadSearch ? 100 : 20)} prospectos ocultos
+                            + {bucket.total - stageLeads.length} prospectos ocultos
                           </div>
                         )}
                       </>
@@ -2083,203 +1970,28 @@ export default function ProjectDetailsPage() {
         {/* ============================================================= */}
         {mainView === 'leads' && (
           <div className="space-y-4 animate-in fade-in-50">
-            {/* Toolbar de búsqueda y filtros */}
-            <div className="flex flex-col gap-3 bg-card/40 p-3 rounded-xl border border-border/60">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
-                  <Input
-                    placeholder="Buscar por nombre, email, teléfono o transacción..."
-                    value={leadSearch}
-                    onChange={(e) => {
-                      setLeadSearch(e.target.value);
-                      setLeadsCursor(null);
-                      setLeadsCursorStack([]);
-                      setLeadsPageNumber(1);
-                    }}
-                    onFocus={(e) => e.target.select()}
-                    className="pl-9 pr-7 bg-[#0B0D13] border-border text-xs h-9"
-                  />
-                  {leadSearch && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLeadSearch('');
-                        setLeadsCursor(null);
-                        setLeadsCursorStack([]);
-                        setLeadsPageNumber(1);
-                      }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs p-0.5 rounded hover:bg-muted/30 transition-colors"
-                      title="Limpiar búsqueda"
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-
-                {/* Selector de Origen */}
-                <Select
-                  value={leadOriginFilter}
-                  onValueChange={(val) => {
-                    setLeadOriginFilter(val);
-                    setLeadsCursor(null);
-                    setLeadsCursorStack([]);
-                    setLeadsPageNumber(1);
-                  }}
-                >
-                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-36">
-                    <SelectValue placeholder="Origen" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos los orígenes</SelectItem>
-                    <SelectItem value="comercial">Comercial</SelectItem>
-                    <SelectItem value="marketing">Marketing</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {/* Selector de Estado */}
-                <Select
-                  value={leadStatusFilter}
-                  onValueChange={(val) => {
-                    setLeadStatusFilter(val);
-                    setLeadsCursor(null);
-                    setLeadsCursorStack([]);
-                    setLeadsPageNumber(1);
-                  }}
-                >
-                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-36">
-                    <SelectValue placeholder="Estado" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">Todos los estados</SelectItem>
-                    <SelectItem value="APPROVED">Aprobada</SelectItem>
-                    <SelectItem value="COMPLETE">Completada</SelectItem>
-                    <SelectItem value="PENDING">Pendiente</SelectItem>
-                    <SelectItem value="REFUNDED">Reembolsada</SelectItem>
-                    <SelectItem value="CANCELED">Cancelada</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {/* Selector de Producto */}
-                <Select
-                  value={leadProductFilter}
-                  onValueChange={(val) => {
-                    setLeadProductFilter(val);
-                    setLeadsCursor(null);
-                    setLeadsCursorStack([]);
-                    setLeadsPageNumber(1);
-                  }}
-                >
-                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-40">
-                    <SelectValue placeholder="Producto" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">Todos los productos</SelectItem>
-                    {products.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* Selector de Closer */}
-                {!isCloser && (
-                  <Select
-                    value={closerFilter}
-                    onValueChange={(val) => {
-                      setCloserFilter(val);
-                      setLeadsCursor(null);
-                      setLeadsCursorStack([]);
-                      setLeadsPageNumber(1);
-                    }}
-                  >
-                    <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-40">
-                      <SelectValue placeholder="Todos los Closers" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ALL">Todos los Closers</SelectItem>
-                      <SelectItem value="Por Asignar">Por Asignar</SelectItem>
-                      {closersInProject.map((c) => (
-                        <SelectItem key={c.id} value={c.userId}>
-                          {c.userName || c.userEmail}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-
-                {/* Selector de Día */}
-                <Input
-                  type="date"
-                  value={leadDayFilter}
-                  onChange={(e) => {
-                    setLeadDayFilter(e.target.value);
-                    setLeadsCursor(null);
-                    setLeadsCursorStack([]);
-                    setLeadsPageNumber(1);
-                  }}
-                  className="w-36 h-9 text-xs bg-[#0B0D13] border-border"
-                />
-
-                {/* Selector de Etapa */}
-                <Select value={stageFilter} onValueChange={setStageFilter}>
-                  <SelectTrigger className="bg-[#0B0D13] text-xs h-9 w-36">
-                    <SelectValue placeholder="Todas las Etapas" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">Todas las Etapas</SelectItem>
-                    {pipelineStages.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
+            {/* Barra de acciones (los filtros viven en el sidebar izquierdo) */}
+            <div className="flex items-center justify-end gap-2 bg-card/40 p-3 rounded-xl border border-border/60">
+              {!isCloser && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => loadLeads(leadsCursor)}
-                  disabled={isLoadingLeads}
+                  onClick={() => setIsLeadImportModalOpen(true)}
                   className="text-xs h-9 border-border text-foreground hover:bg-muted"
                 >
-                  <RefreshCw size={13} className={`mr-1 ${isLoadingLeads ? 'animate-spin' : ''}`} />
-                  Refrescar
+                  <UploadCloud size={13} className="mr-1" />
+                  Importar CSV
                 </Button>
-
-                {(leadOriginFilter !== 'todos' || leadStatusFilter !== 'ALL' || leadProductFilter !== 'ALL' || closerFilter !== 'ALL' || stageFilter !== 'ALL' || !!leadDayFilter || !!leadSearch) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={resetLeadsFiltersAndPagination}
-                    className="text-xs h-9 text-muted-foreground hover:text-foreground"
-                  >
-                    Limpiar filtros
-                  </Button>
-                )}
-
-                {!isCloser && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsLeadImportModalOpen(true)}
-                    className="text-xs h-9 border-border text-foreground hover:bg-muted"
-                  >
-                    <UploadCloud size={13} className="mr-1" />
-                    Importar CSV
-                  </Button>
-                )}
-                <Button
-                  variant="gold"
-                  size="sm"
-                  onClick={() => setIsNewLeadOpen(true)}
-                  className="text-xs h-9 font-bold"
-                >
-                  <Plus size={13} className="mr-1" />
-                  Agregar Lead
-                </Button>
-              </div>
+              )}
+              <Button
+                variant="gold"
+                size="sm"
+                onClick={() => setIsNewLeadOpen(true)}
+                className="text-xs h-9 font-bold"
+              >
+                <Plus size={13} className="mr-1" />
+                Agregar Lead
+              </Button>
             </div>
 
             {/* TABLA DE LEADS */}
@@ -2428,7 +2140,7 @@ export default function ProjectDetailsPage() {
                 mode="leads" 
                 onClose={() => {
                   setIsLeadImportModalOpen(false);
-                  loadLeads();
+                  invalidateSalesData();
                 }} 
               />
             </DialogContent>
@@ -2462,7 +2174,8 @@ export default function ProjectDetailsPage() {
               effectiveRole={effectiveRole || ''}
               currentUserId={currentUser?.id || ''}
               pipelineStages={pipelineStages}
-              onDataChange={loadLeads}
+              filters={filters}
+              onDataChange={invalidateSalesData}
             />
           </div>
         )}
@@ -2471,7 +2184,7 @@ export default function ProjectDetailsPage() {
         {/* VISTA 6: TRANSACCIONES                                        */}
         {/* ============================================================= */}
         {mainView === 'transactions' && (
-          <TransactionsView projectId={projectId} />
+          <TransactionsView projectId={projectId} filters={filters} products={products} />
         )}
 
         {/* ============================================================= */}
@@ -3713,6 +3426,8 @@ export default function ProjectDetailsPage() {
             )}
           </div>
         )}
+          </div>
+        </div>
 
         {/* ------------------------------------------------------------- */}
         {/* MODAL: AGREGAR NUEVO LEAD AL PIPELINE                         */}
@@ -4056,7 +3771,7 @@ export default function ProjectDetailsPage() {
           allTransactions={allProjectTransactions}
           isCloser={isCloser}
           onSave={() => {
-            loadLeads();
+            invalidateSalesData();
             setSelectedLead(null);
           }}
         />

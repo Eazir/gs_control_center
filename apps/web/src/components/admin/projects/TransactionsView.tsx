@@ -3,6 +3,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { fetchWithAuth } from '@/lib/api-client';
+import { ProjectFilters, buildFilterQuery, hasActiveFilters } from '@/lib/project-filters';
+import { jsonFetcher } from '@/lib/swr-fetcher';
+import useSWR from 'swr';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +35,7 @@ export interface TransactionsViewProps {
   products?: Array<{ id: string; name: string }>;
   members?: Array<{ userId: string; userName?: string | null; userEmail?: string | null; roleInProject?: string; userRole?: string | null }>;
   allUsers?: Array<{ id: string; fullName?: string | null; email?: string | null }>;
+  filters: ProjectFilters;
 }
 
 interface PageInfo {
@@ -48,7 +52,7 @@ interface PageInfo {
  * Esta vista está restringida únicamente a roles gerenciales (Director, Admin, Super Admin).
  * Los Closers no tienen acceso a este listado.
  */
-export function TransactionsView({ projectId, products = [], members = [], allUsers = [] }: TransactionsViewProps) {
+export function TransactionsView({ projectId, products = [], members = [], allUsers = [], filters }: TransactionsViewProps) {
   const searchParams = useSearchParams();
 
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -62,14 +66,6 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
 
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  // Filtros
-  const [originFilter, setOriginFilter] = useState<string>(() => searchParams?.get('origin') || 'todos');
-  const [statusFilter, setStatusFilter] = useState<string>(() => searchParams?.get('status') || 'ALL');
-  const [productFilter, setProductFilter] = useState<string>(() => searchParams?.get('productId') || 'ALL');
-  const [closerFilter, setCloserFilter] = useState<string>(() => searchParams?.get('closerId') || 'ALL');
-  const [dayFilter, setDayFilter] = useState<string>(() => searchParams?.get('day') || '');
-  const [searchTerm, setSearchTerm] = useState<string>(() => searchParams?.get('search') || '');
 
   // Paginación keyset
   const [currentCursor, setCurrentCursor] = useState<string | null>(() => searchParams?.get('cursor') || null);
@@ -124,60 +120,34 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
   }, [products, transactions]);
 
-  const loadTransactions = useCallback(async (targetCursor?: string | null) => {
-    if (!projectId) return;
-    setIsLoading(true);
-    setLoadError(null);
-    try {
-      const params = new URLSearchParams();
-      if (originFilter && originFilter !== 'todos') params.set('origin', originFilter);
-      if (statusFilter && statusFilter !== 'ALL') params.set('status', statusFilter);
-      if (productFilter && productFilter !== 'ALL') params.set('productId', productFilter);
-      if (closerFilter && closerFilter !== 'ALL') params.set('closerId', closerFilter);
-      if (dayFilter) params.set('day', dayFilter);
-      if (searchTerm.trim()) params.set('search', searchTerm.trim());
+  // Carga de transacciones con SWR (caché por filtros + cursor, invalidable).
+  type TransactionsListResponse = { items: unknown[]; total: number; pageInfo: PageInfo };
 
-      const activeCursor = targetCursor !== undefined ? targetCursor : currentCursor;
-      if (activeCursor) params.set('cursor', activeCursor);
-      params.set('limit', '50');
-
-      // Reflejar en URL sin recarga completa
-      if (typeof window !== 'undefined') {
-        const queryStr = params.toString() ? `?${params.toString()}` : '';
-        window.history.replaceState(null, '', `${window.location.pathname}${queryStr}`);
-      }
-
-      const res = await fetchWithAuth(`/sales/project/${projectId}/transactions?${params.toString()}`);
-      if (!res.ok) {
-        const errorText = await res.text().catch(() => '');
-        throw new Error(errorText || `Error ${res.status}: No se pudieron cargar las transacciones`);
-      }
-      const data = await res.json();
-      if (data && typeof data === 'object' && Array.isArray(data.items)) {
-        setTransactions(data.items);
-        setTotal(data.total ?? 0);
-        setPageInfo(data.pageInfo ?? { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
-      } else if (Array.isArray(data)) {
-        setTransactions(data);
-        setTotal(data.length);
-        setPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
-      } else {
-        setTransactions([]);
-        setTotal(0);
-        setPageInfo({ hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error inesperado al cargar las transacciones';
-      console.error('[TransactionsView] Error loading transactions:', err);
-      setLoadError(msg);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [projectId, originFilter, statusFilter, productFilter, closerFilter, dayFilter, searchTerm, currentCursor]);
+  const txQuery = buildFilterQuery(filters);
+  if (currentCursor) txQuery.set('cursor', currentCursor);
+  txQuery.set('limit', '50');
+  const txKey = projectId ? `/sales/project/${projectId}/transactions?${txQuery.toString()}` : null;
+  const { data: txData, isLoading: swrLoading, error, mutate: mutateTransactions } = useSWR<TransactionsListResponse, Error>(
+    txKey,
+    jsonFetcher<TransactionsListResponse>,
+    { keepPreviousData: true }
+  );
 
   useEffect(() => {
-    loadTransactions();
-  }, [loadTransactions]);
+    if (txData) {
+      setTransactions(txData.items ?? []);
+      setTotal(txData.total ?? 0);
+      setPageInfo(txData.pageInfo ?? { hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null });
+    }
+  }, [txData]);
+
+  useEffect(() => {
+    setIsLoading(swrLoading);
+  }, [swrLoading]);
+
+  useEffect(() => {
+    setLoadError(error ? (error instanceof Error ? error.message : 'Error al cargar las transacciones') : null);
+  }, [error]);
 
   // Manejadores de paginación
   const handleNextPage = () => {
@@ -196,18 +166,6 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
     setPageNumber((prev) => Math.max(1, prev - 1));
   };
 
-  const resetFiltersAndPagination = () => {
-    setOriginFilter('todos');
-    setStatusFilter('ALL');
-    setProductFilter('ALL');
-    setCloserFilter('ALL');
-    setDayFilter('');
-    setSearchTerm('');
-    setCurrentCursor(null);
-    setCursorStack([]);
-    setPageNumber(1);
-  };
-
   const getStatusBadge = (status: string) => {
     const naturalName = getNaturalStatusName(status);
     const classes = getStatusBadgeClasses(status);
@@ -222,8 +180,6 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
       maximumFractionDigits: 2,
     }).format(amount);
   };
-
-  const hasActiveFilters = originFilter !== 'todos' || statusFilter !== 'ALL' || productFilter !== 'ALL' || closerFilter !== 'ALL' || !!dayFilter || !!searchTerm;
 
   return (
     <div className="space-y-6 animate-in fade-in-50">
@@ -246,7 +202,7 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
             Importar Transacciones
           </button>
           <button
-            onClick={() => loadTransactions(currentCursor)}
+            onClick={() => void mutateTransactions()}
             disabled={isLoading}
             className="px-3 py-2 bg-card border border-border/60 hover:bg-muted text-foreground font-medium text-sm rounded-lg transition-colors flex items-center gap-2"
           >
@@ -263,166 +219,13 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
             <h3 className="text-sm font-semibold text-red-500">Error al cargar transacciones</h3>
             <p className="text-xs text-red-400 mt-1">{loadError}</p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => loadTransactions(currentCursor)} className="text-xs">
+          <Button variant="outline" size="sm" onClick={() => void mutateTransactions()} className="text-xs">
             Reintentar
           </Button>
         </div>
       )}
 
       <Card className="p-0 border-border bg-card overflow-hidden shadow-sm">
-        {/* BARRA DE FILTROS */}
-        <div className="p-4 border-b border-border bg-muted/30 space-y-3">
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Búsqueda servidor */}
-            <div className="relative flex-1 min-w-[200px] max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por email, lead, producto o ID..."
-                value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setCurrentCursor(null);
-                  setCursorStack([]);
-                  setPageNumber(1);
-                }}
-                className="pl-9 pr-7 bg-background border-border focus:border-primary text-foreground text-xs h-9"
-              />
-              {searchTerm && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchTerm('');
-                    setCurrentCursor(null);
-                    setCursorStack([]);
-                    setPageNumber(1);
-                  }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
-                >
-                  <X size={13} />
-                </button>
-              )}
-            </div>
-
-            {/* Selector de Origen */}
-            <Select
-              value={originFilter}
-              onValueChange={(val) => {
-                setOriginFilter(val);
-                setCurrentCursor(null);
-                setCursorStack([]);
-                setPageNumber(1);
-              }}
-            >
-              <SelectTrigger className="w-[140px] h-9 text-xs bg-background border-border">
-                <SelectValue placeholder="Origen" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos los orígenes</SelectItem>
-                <SelectItem value="comercial">Comercial</SelectItem>
-                <SelectItem value="marketing">Marketing</SelectItem>
-              </SelectContent>
-            </Select>
-
-            {/* Selector de Estado */}
-            <Select
-              value={statusFilter}
-              onValueChange={(val) => {
-                setStatusFilter(val);
-                setCurrentCursor(null);
-                setCursorStack([]);
-                setPageNumber(1);
-              }}
-            >
-              <SelectTrigger className="w-[150px] h-9 text-xs bg-background border-border">
-                <SelectValue placeholder="Estado" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">Todos los estados</SelectItem>
-                <SelectItem value="APPROVED">Aprobada</SelectItem>
-                <SelectItem value="COMPLETE">Completada</SelectItem>
-                <SelectItem value="PENDING">Pendiente</SelectItem>
-                <SelectItem value="REFUNDED">Reembolsada</SelectItem>
-                <SelectItem value="CHARGEBACK">Chargeback</SelectItem>
-                <SelectItem value="CANCELED">Cancelada</SelectItem>
-                <SelectItem value="ABANDONED_CART">Carrito Abandonado</SelectItem>
-              </SelectContent>
-            </Select>
-
-            {/* Selector de Producto */}
-            <Select
-              value={productFilter}
-              onValueChange={(val) => {
-                setProductFilter(val);
-                setCurrentCursor(null);
-                setCursorStack([]);
-                setPageNumber(1);
-              }}
-            >
-              <SelectTrigger className="w-[160px] h-9 text-xs bg-background border-border">
-                <SelectValue placeholder="Producto" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">Todos los productos</SelectItem>
-                {availableProducts.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Selector de Closer */}
-            <Select
-              value={closerFilter}
-              onValueChange={(val) => {
-                setCloserFilter(val);
-                setCurrentCursor(null);
-                setCursorStack([]);
-                setPageNumber(1);
-              }}
-            >
-              <SelectTrigger className="w-[150px] h-9 text-xs bg-background border-border">
-                <SelectValue placeholder="Closer" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">Todos los closers</SelectItem>
-                {availableClosers.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Selector de Día */}
-            <div className="flex items-center gap-1.5">
-              <Calendar size={14} className="text-muted-foreground" />
-              <Input
-                type="date"
-                value={dayFilter}
-                onChange={(e) => {
-                  setDayFilter(e.target.value);
-                  setCurrentCursor(null);
-                  setCursorStack([]);
-                  setPageNumber(1);
-                }}
-                className="w-36 h-9 text-xs bg-background border-border"
-              />
-            </div>
-
-            {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={resetFiltersAndPagination}
-                className="h-9 text-xs text-muted-foreground hover:text-foreground"
-              >
-                Limpiar filtros
-              </Button>
-            )}
-          </div>
-        </div>
-
         {/* CONTADOR Y PAGINACIÓN AL INICIO DE LA TABLA */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-2.5 bg-muted/10 border-b border-border">
           <div className="text-xs text-muted-foreground font-medium">
@@ -483,7 +286,7 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
               ) : transactions.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="h-32 text-center text-muted-foreground text-sm">
-                    {hasActiveFilters ? 'No hay transacciones con esos filtros.' : 'No hay transacciones registradas.'}
+                    {hasActiveFilters(filters) ? 'No hay transacciones con esos filtros.' : 'No hay transacciones registradas.'}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -542,7 +345,7 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
             mode="sales" 
             onClose={() => {
               setIsImportModalOpen(false);
-              loadTransactions(currentCursor);
+              void mutateTransactions();
             }} 
           />
         </DialogContent>
@@ -553,7 +356,7 @@ export function TransactionsView({ projectId, products = [], members = [], allUs
         onClose={() => setSelectedTxn(null)}
         transaction={selectedTxn}
         allTransactions={transactions}
-        onSaveLead={() => loadTransactions(currentCursor)}
+        onSaveLead={() => void mutateTransactions()}
       />
     </div>
   );
